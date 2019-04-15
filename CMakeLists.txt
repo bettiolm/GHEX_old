@@ -16,6 +16,11 @@ message(">>>>>>>>>>>>>>>>${GridTools_MODULE_PATH}")
 
 list(APPEND CMAKE_MODULE_PATH "${GridTools_MODULE_PATH}")
 
+
+add_executable( test_data_descriptor tests/test_data_descriptor.cpp)
+target_link_libraries(test_data_descriptor GridTools::gridtools GridTools::gcl)
+
+
 add_executable( test_iteration_spaces tests/test_iteration_spaces.cpp )
 target_link_libraries(test_iteration_spaces ${exe_LIBS} GridTools::gridtools GridTools::gcl)
 
