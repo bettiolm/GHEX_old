@@ -401,9 +401,9 @@ namespace halo_exchange_3D_generic_full {
             std::ofstream tfile(filename.c_str());
             tfile << "\nFILE for " << *it << "\n";
 
-            auto hdl_a = (*itc_a).exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a, tfile);
-            auto hdl_b = (*itc_b).exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b, tfile);
-            auto hdl_c = (*itc_c).exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c, tfile);
+            auto hdl_a = (*itc_a).template exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a, tfile);
+            auto hdl_b = (*itc_b).template exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b, tfile);
+            auto hdl_c = (*itc_c).template exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c, tfile);
 
             hdl_a.wait();
             hdl_b.wait();
