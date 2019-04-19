@@ -7,25 +7,159 @@
  * Please, refer to the LICENSE file in the root directory.
  * SPDX-License-Identifier: BSD-3-Clause
  */
-#include "gtest/gtest.h"
-#include <fstream>
-#include <gridtools/common/boollist.hpp>
-#include <gridtools/communication/halo_exchange.hpp>
-#include <gridtools/storage/storage_facility.hpp>
+
 #include <iostream>
-#include <mpi.h>
 #include <sstream>
+#include <fstream>
+
 #include <stdlib.h>
-#include <string>
 #include <sys/time.h>
+#include <mpi.h>
+#include <string>
+#include <utility>
 
-#include "triplet.hpp"
+#include <type_traits>
+#include <list>
+#include <array>
+#include <vector>
+#include <algorithm>
 
+#include <gridtools/common/boollist.hpp>
+#include <gridtools/meta/utility.hpp>
+#include <gridtools/storage/storage_facility.hpp>
 #include <gridtools/tools/mpi_unit_test_driver/device_binding.hpp>
 
-#ifdef __CUDACC__
-#include <gridtools/common/cuda_util.hpp>
-#endif
+#include <prototype/generic_interfaces.hpp>
+#include <prototype/range_loops.hpp>
+#include <prototype/regular_grid_descriptors.hpp>
+#include <prototype/triplet.hpp>
+
+namespace gt = gridtools;
+
+using id_type = std::array<int,3>;
+
+
+std::ostream& operator<<(std::ostream& os, const id_type& x) {
+    os << "(" << x[0] << ", " << x[1] << ", " << x[2] << ")";
+    return os;
+}
+
+
+namespace std {
+    template<> struct hash<id_type> {
+        std::size_t operator()(id_type const& t) const {
+            return std::hash<int>{}(t[0]); // To DO: find better hash function!
+        }
+    };
+}
+
+
+struct dir_type : public gt::direction<3> {
+
+    using gt::direction<3>::direction;
+
+    static int direction2int(dir_type d) {
+        return d.m_data[0]*3*3+d.m_data[1]*3+d.m_data[2] + 13;
+    }
+
+    static dir_type invert_direction(dir_type d) {
+        return dir_type{std::array<int, 3>{-d.m_data[0], -d.m_data[1], -d.m_data[2]}};
+    }
+
+};
+
+
+template<int r, typename DA, typename DT>
+class data_descriptor_t {
+
+  private:
+
+    struct range {
+
+        int m_begin;
+        int m_end;
+
+        range(int b, int e) : m_begin(b), m_end(e) {}
+
+        int begin() const {
+            return m_begin;
+        }
+
+        int end() const {
+            return m_end;
+        }
+
+    };
+
+    std::array<int, r> m_sizes;
+    DA m_data;
+
+  public:
+
+    static const int rank = r;
+
+    template <typename ...Sizes>
+    data_descriptor_t(const DA& data, Sizes... s) : m_sizes{s...}, m_data{data} {}
+
+    template <int I>
+    int begin() const {
+        return 0;
+    }
+
+    template <int I>
+    int end() const {
+        return m_sizes[I];
+    }
+
+    template <int I>
+    range range_of() const {
+        return range(begin<I>(), end<I>());
+    }
+
+    DT get_data(std::array<int, r> indices) const {
+        return get_data(indices, gridtools::meta::make_integer_sequence<int, r>{});
+    }
+
+    void set_data(DT value, std::array<int, r> indices) {
+        set_data(value, indices, gridtools::meta::make_integer_sequence<int, r>{});
+    }
+
+    void show_data(std::ostream& s) {
+        auto ranges_of_data = make_range_of_data(gridtools::meta::make_integer_sequence<int, r>{});
+        gridtools::range_loop(ranges_of_data, [&s, this](auto const& indices) {
+            show_data(s, indices);
+            s << " "; // TO DO: still misisng a way to format the data nicely
+        });
+    }
+
+  private:
+
+    template <int... Dims>
+    DT get_data(std::array<int, r> indices, gridtools::meta::integer_sequence<int, Dims...>) const {
+        return m_data(indices[Dims]...);
+    }
+
+    template <int... Dims>
+    void set_data(DT value, std::array<int, r> indices, gridtools::meta::integer_sequence<int, Dims...>) {
+        m_data(indices[Dims]...) = value;
+    }
+
+    template <int... Dims>
+    void show_data(std::ostream& s, std::array<int, r> indices, gridtools::meta::integer_sequence<int, Dims...>) const {
+        s << m_data(indices[Dims]...);
+    }
+
+    void show_data(std::ostream& s, std::array<int, r> indices) const {
+        show_data(s, indices, gridtools::meta::make_integer_sequence<int, r>{});
+    }
+
+    template <int... Dims>
+    auto make_range_of_data(gridtools::meta::integer_sequence<int, Dims...>) {
+        return std::make_tuple(range_of<Dims>()...);
+    }
+
+};
+
 
 namespace halo_exchange_3D_generic_full {
     int pid;
@@ -46,21 +180,9 @@ namespace halo_exchange_3D_generic_full {
 #define B_ADD 1
 #define C_ADD 2
 
-#ifdef VECTOR_INTERFACE
-    typedef int T1;
-    typedef int T2;
-    typedef int T3;
-#else
     typedef int T1;
     typedef double T2;
     typedef long long int T3;
-#endif
-
-#ifdef __CUDACC__
-    typedef gridtools::gcl_gpu arch_type;
-#else
-    typedef gridtools::gcl_cpu arch_type;
-#endif
 
     template <typename ST, int I1, int I2, int I3, bool per0, bool per1, bool per2>
     bool run(ST &file,
@@ -91,83 +213,71 @@ namespace halo_exchange_3D_generic_full {
 
         typedef gridtools::layout_map<I1, I2, I3> layoutmap;
 
+        typedef data_descriptor_t<3, array<triple_t<USE_DOUBLE, T1>, layoutmap>, triple_t<USE_DOUBLE, T1>> data_dsc_type_1;
+        typedef data_descriptor_t<3, array<triple_t<USE_DOUBLE, T2>, layoutmap>, triple_t<USE_DOUBLE, T2>> data_dsc_type_2;
+        typedef data_descriptor_t<3, array<triple_t<USE_DOUBLE, T3>, layoutmap>, triple_t<USE_DOUBLE, T3>> data_dsc_type_3;
+
+        id_type id{coords[0], coords[1], coords[2]};
+        std::list<id_type> local_ids{id};
+
+        auto neighbor_generator = [](id_type _id) -> std::vector<std::pair<id_type, dir_type>> {
+
+            int i = _id[0];
+            int j = _id[1];
+            int k = _id[2];
+            int nim, nip, njm, njp, nkm, nkp;
+            std::vector<std::pair<id_type, dir_type>> neighbors;
+
+            if (per0) {
+                neighbors.push_back(std::make_pair(id_type{mod(i-1, dims[0]), j, k}, std::array<int, 3>{-1,0,0}));
+                neighbors.push_back(std::make_pair(id_type{mod(i+1, dims[0]), j, k}, std::array<int, 3>{1,0,0}));
+            } else {
+                if (i > 0) neighbors.push_back(std::make_pair(id_type{i-1, j, k}, std::array<int, 3>{-1,0,0}));
+                if (i < (dims[0]-1)) neighbors.push_back(std::make_pair(id_type{i+1, j, k}, std::array<int, 3>{1,0,0}));
+            }
+
+            if (per1) {
+                neighbors.push_back(std::make_pair(id_type{i, mod(j-1, dims[1]), k}, std::array<int, 3>{0,-1,0}));
+                neighbors.push_back(std::make_pair(id_type{i, mod(j+1, dims[1]), k}, std::array<int, 3>{0,1,0}));
+            } else {
+                if (j > 0) neighbors.push_back(std::make_pair(id_type{i, j-1, k}, std::array<int, 3>{0,-1,0}));
+                if (j < (dims[1]-1)) neighbors.push_back(std::make_pair(id_type{i, j+1, k}, std::array<int, 3>{0,1,0}));
+            }
+
+            if (per2) {
+                neighbors.push_back(std::make_pair(id_type{i, j, mod(k-1, dims[2])}, std::array<int, 3>{0,0,-1}));
+                neighbors.push_back(std::make_pair(id_type{i, j, mod(k+1, dims[2])}, std::array<int, 3>{0,0,1}));
+            } else {
+                if (k > 0) neighbors.push_back(std::make_pair(id_type{i, j, k-1}, std::array<int, 3>{0,0,-1}));
+                if (k < (dims[2]-1)) neighbors.push_back(std::make_pair(id_type{i, j, k+1}, std::array<int, 3>{0,0,1}));
+            }
+
+            return neighbors;
+
+        };
+
+        file << "Local ids\n";
+        std::for_each(local_ids.begin(), local_ids.end(), [&file, neighbor_generator] (id_type const& x) {
+            auto list = neighbor_generator(x);
+            file << "neighbors of ID = " << x << ":\n";
+            std::for_each(list.begin(), list.end(), [&file](std::pair<id_type, dir_type> const& y) {
+                file << y.first << ", ";
+            });
+            file << "\n";
+        });
+        file << "\n";
+
+        generic_pg<id_type, dir_type> pg(local_ids, neighbor_generator, file);
+
+        pg.show_topology(file);
+        file.flush();
+
         array<triple_t<USE_DOUBLE, T1>, layoutmap> a(
             _a, (DIM1 + H1m1 + H1p1), (DIM2 + H2m1 + H2p1), (DIM3 + H3m1 + H3p1));
         array<triple_t<USE_DOUBLE, T2>, layoutmap> b(
             _b, (DIM1 + H1m2 + H1p2), (DIM2 + H2m2 + H2p2), (DIM3 + H3m2 + H3p2));
         array<triple_t<USE_DOUBLE, T3>, layoutmap> c(
             _c, (DIM1 + H1m3 + H1p3), (DIM2 + H2m3 + H2p3), (DIM3 + H3m3 + H3p3));
-
-        /* The pattern type is defined with the layouts, data types and
-           number of dimensions.
-
-           The logical assumption done in the program is that 'i' is the
-           first dimension (rows), 'j' is the second, and 'k' is the
-           third. The first layout states that 'i' is the second dimension
-           in order of strides, while 'j' is the first and 'k' is the third
-           (just by looking at the initialization loops this shoule be
-           clear).
-
-           The second layout states that the first dimension in data ('i')
-           identify also the first dimension in the communicator. Logically,
-           moving on 'i' dimension from processot (p,q,r) will lead you
-           logically to processor (p+1,q,r). The other dimensions goes as
-           the others.
-        */
-        typedef gridtools::halo_exchange_generic<gridtools::layout_map<0, 1, 2>, arch_type> pattern_type;
-
-        /* The pattern is now instantiated with the periodicities and the
-           communicator. The periodicity of the communicator is
-           irrelevant. Setting it to be periodic is the best choice, then
-           GCL can deal with any periodicity easily.
-        */
-        pattern_type he(typename pattern_type::grid_type::period_type(per0, per1, per2), CartComm);
-
-        gridtools::array<gridtools::halo_descriptor, 3> halo_dsc1;
-        halo_dsc1[0] = gridtools::halo_descriptor(H1m1, H1p1, H1m1, DIM1 + H1m1 - 1, DIM1 + H1m1 + H1p1);
-        halo_dsc1[1] = gridtools::halo_descriptor(H2m1, H2p1, H2m1, DIM2 + H2m1 - 1, DIM2 + H2m1 + H2p1);
-        halo_dsc1[2] = gridtools::halo_descriptor(H3m1, H3p1, H3m1, DIM3 + H3m1 - 1, DIM3 + H3m1 + H3p1);
-
-        gridtools::array<gridtools::halo_descriptor, 3> halo_dsc2;
-        halo_dsc2[0] = gridtools::halo_descriptor(H1m2, H1p2, H1m2, DIM1 + H1m2 - 1, DIM1 + H1m2 + H1p2);
-        halo_dsc2[1] = gridtools::halo_descriptor(H2m2, H2p2, H2m2, DIM2 + H2m2 - 1, DIM2 + H2m2 + H2p2);
-        halo_dsc2[2] = gridtools::halo_descriptor(H3m2, H3p2, H3m2, DIM3 + H3m2 - 1, DIM3 + H3m2 + H3p2);
-
-        gridtools::array<gridtools::halo_descriptor, 3> halo_dsc3;
-        halo_dsc3[0] = gridtools::halo_descriptor(H1m3, H1p3, H1m3, DIM1 + H1m3 - 1, DIM1 + H1m3 + H1p3);
-        halo_dsc3[1] = gridtools::halo_descriptor(H2m3, H2p3, H2m3, DIM2 + H2m3 - 1, DIM2 + H2m3 + H2p3);
-        halo_dsc3[2] = gridtools::halo_descriptor(H3m3, H3p3, H3m3, DIM3 + H3m3 - 1, DIM3 + H3m3 + H3p3);
-
-        /* Pattern is set up. This must be done only once per pattern. The
-           parameter must me greater or equal to the largest number of
-           arrays updated in a single step.
-        */
-        // he.setup(100, halo_dsc, sizeof(double));
-
-        gridtools::array<gridtools::halo_descriptor, 3> h_example;
-#define MAX3(a, b, c) std::max(a, std::max(b, c))
-        h_example[0] = gridtools::halo_descriptor(MAX3(H1m1, H1m2, H1m3),
-            MAX3(H1p1, H1p2, H1p3),
-            MAX3(H1m1, H1m2, H1m3),
-            DIM1 + MAX3(H1m1, H1m2, H1m3) - 1,
-            DIM1 + MAX3(H1m1, H1m2, H1m3) + MAX3(H1p1, H1p3, H1p3));
-        h_example[1] = gridtools::halo_descriptor(MAX3(H2m1, H2m2, H2m3),
-            MAX3(H2p1, H2p2, H2p3),
-            MAX3(H2m1, H2m2, H2m3),
-            DIM2 + MAX3(H2m1, H2m2, H2m3) - 1,
-            DIM2 + MAX3(H2m1, H2m2, H2m3) + MAX3(H2p1, H2p3, H2p3));
-        h_example[2] = gridtools::halo_descriptor(MAX3(H3m1, H3m2, H3m3),
-            MAX3(H3p1, H3p2, H3p3),
-            MAX3(H3m1, H3m2, H3m3),
-            DIM3 + MAX3(H3m1, H3m2, H3m3) - 1,
-            DIM3 + MAX3(H3m1, H3m2, H3m3) + MAX3(H3p1, H3p3, H3p3));
-#undef MAX3
-        he.setup(3,
-            gridtools::field_on_the_fly<int, layoutmap, pattern_type::traits>(nullptr, h_example), // BEWARE!!!!
-            std::max(sizeof(triple_t<USE_DOUBLE, T1>::data_type),
-                std::max(sizeof(triple_t<USE_DOUBLE, T2>::data_type),
-                    sizeof(triple_t<USE_DOUBLE, T3>::data_type)) // Estimates the size
-                ));
 
         file << "Proc: (" << coords[0] << ", " << coords[1] << ", " << coords[2] << ")\n";
 
@@ -224,141 +334,95 @@ namespace halo_exchange_3D_generic_full {
         printbuff(file, c, DIM1 + H1m3 + H1p3, DIM2 + H2m3 + H2p3, DIM3 + H3m3 + H3p3);
         file.flush();
 
-#ifdef __CUDACC__
-        file << "***** GPU ON *****\n";
+        data_dsc_type_1 data_dsc_a{a, DIM1 + H1m1 + H1p1, DIM2 + H2m1 + H2p1, DIM3 + H3m1 + H3p1};
+        data_dsc_type_2 data_dsc_b{b, DIM1 + H1m2 + H1p2, DIM2 + H2m2 + H2p2, DIM3 + H3m2 + H3p2};
+        data_dsc_type_3 data_dsc_c{c, DIM1 + H1m3 + H1p3, DIM2 + H2m3 + H2p3, DIM3 + H3m3 + H3p3};
 
-        triple_t<USE_DOUBLE, T1>::data_type *gpu_a = 0;
-        triple_t<USE_DOUBLE, T2>::data_type *gpu_b = 0;
-        triple_t<USE_DOUBLE, T3>::data_type *gpu_c = 0;
-        GT_CUDA_CHECK(cudaMalloc(&gpu_a,
-            (DIM1 + H1m1 + H1p1) * (DIM2 + H2m1 + H2p1) * (DIM3 + H3m1 + H3p1) *
-                sizeof(triple_t<USE_DOUBLE, T1>::data_type)));
-        GT_CUDA_CHECK(cudaMalloc(&gpu_b,
-            (DIM1 + H1m2 + H1p2) * (DIM2 + H2m2 + H2p2) * (DIM3 + H3m2 + H3p2) *
-                sizeof(triple_t<USE_DOUBLE, T2>::data_type)));
-        GT_CUDA_CHECK(cudaMalloc(&gpu_c,
-            (DIM1 + H1m3 + H1p3) * (DIM2 + H2m3 + H2p3) * (DIM3 + H3m3 + H3p3) *
-                sizeof(triple_t<USE_DOUBLE, T3>::data_type)));
+        std::array<gt::halo_sizes, 3> halos_a = {gt::halo_sizes{H1m1, H1p1}, gt::halo_sizes{H2m1, H2p1}, gt::halo_sizes{H3m1, H3p1}};
+        std::array<gt::halo_sizes, 3> halos_b = {gt::halo_sizes{H1m2, H1p2}, gt::halo_sizes{H2m2, H2p2}, gt::halo_sizes{H3m2, H3p2}};
+        std::array<gt::halo_sizes, 3> halos_c = {gt::halo_sizes{H1m3, H1p3}, gt::halo_sizes{H2m3, H2p3}, gt::halo_sizes{H3m3, H3p3}};
 
-        GT_CUDA_CHECK(cudaMemcpy(gpu_a,
-            a.ptr,
-            (DIM1 + H1m1 + H1p1) * (DIM2 + H2m1 + H2p1) * (DIM3 + H3m1 + H3p1) *
-                sizeof(triple_t<USE_DOUBLE, T1>::data_type),
-            cudaMemcpyHostToDevice));
+        gt::regular_grid_descriptor<3> grid_a(halos_a);
+        gt::regular_grid_descriptor<3> grid_b(halos_b);
+        gt::regular_grid_descriptor<3> grid_c(halos_c);
 
-        GT_CUDA_CHECK(cudaMemcpy(gpu_b,
-            b.ptr,
-            (DIM1 + H1m2 + H1p2) * (DIM2 + H2m2 + H2p2) * (DIM3 + H3m2 + H3p2) *
-                sizeof(triple_t<USE_DOUBLE, T2>::data_type),
-            cudaMemcpyHostToDevice));
+        auto iteration_spaces_send_a = [&data_dsc_a, &grid_a](id_type local, id_type remote, dir_type direction) {
+            return grid_a.inner_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_a, direction);
+        };
 
-        GT_CUDA_CHECK(cudaMemcpy(gpu_c,
-            c.ptr,
-            (DIM1 + H1m3 + H1p3) * (DIM2 + H2m3 + H2p3) * (DIM3 + H3m3 + H3p3) *
-                sizeof(triple_t<USE_DOUBLE, T3>::data_type),
-            cudaMemcpyHostToDevice));
+        auto iteration_spaces_recv_a = [&data_dsc_a, &grid_a](id_type local, id_type remote, dir_type direction) {
+            return grid_a.outer_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_a, direction);
+        };
 
-        gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T1>::data_type, layoutmap, pattern_type::traits> field1(
-            reinterpret_cast<triple_t<USE_DOUBLE, T1>::data_type *>(gpu_a), halo_dsc1);
-        gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T2>::data_type, layoutmap, pattern_type::traits> field2(
-            reinterpret_cast<triple_t<USE_DOUBLE, T2>::data_type *>(gpu_b), halo_dsc2);
-        gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T3>::data_type, layoutmap, pattern_type::traits> field3(
-            reinterpret_cast<triple_t<USE_DOUBLE, T3>::data_type *>(gpu_c), halo_dsc3);
-#else
-        gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T1>::data_type, layoutmap, pattern_type::traits> field1(
-            reinterpret_cast<triple_t<USE_DOUBLE, T1>::data_type *>(a.ptr), halo_dsc1);
-        gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T2>::data_type, layoutmap, pattern_type::traits> field2(
-            reinterpret_cast<triple_t<USE_DOUBLE, T2>::data_type *>(b.ptr), halo_dsc2);
-        gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T3>::data_type, layoutmap, pattern_type::traits> field3(
-            reinterpret_cast<triple_t<USE_DOUBLE, T3>::data_type *>(c.ptr), halo_dsc3);
-#endif
+        auto iteration_spaces_send_b = [&data_dsc_b, &grid_b](id_type local, id_type remote, dir_type direction) {
+            return grid_b.inner_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_b, direction);
+        };
 
-#ifdef VECTOR_INTERFACE
+        auto iteration_spaces_recv_b = [&data_dsc_b, &grid_b](id_type local, id_type remote, dir_type direction) {
+            return grid_b.outer_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_b, direction);
+        };
 
-        std::vector<gridtools::field_on_the_fly<triple_t<USE_DOUBLE, T1>::data_type, layoutmap, pattern_type::traits>>
-            vect(3);
+        auto iteration_spaces_send_c = [&data_dsc_c, &grid_c](id_type local, id_type remote, dir_type direction) {
+            return grid_c.inner_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_c, direction);
+        };
 
-        vect[0] = field1;
-        vect[1] = field2;
-        vect[2] = field3;
+        auto iteration_spaces_recv_c = [&data_dsc_c, &grid_c](id_type local, id_type remote, dir_type direction) {
+            return grid_c.outer_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_c, direction);
+        };
+
+        typedef generic_co<generic_pg<id_type, dir_type>, decltype(iteration_spaces_send_a), decltype(iteration_spaces_recv_a)> co_type_a;
+        typedef generic_co<generic_pg<id_type, dir_type>, decltype(iteration_spaces_send_b), decltype(iteration_spaces_recv_b)> co_type_b;
+        typedef generic_co<generic_pg<id_type, dir_type>, decltype(iteration_spaces_send_c), decltype(iteration_spaces_recv_c)> co_type_c;
+
+        std::vector<co_type_a> co_a;
+        std::vector<co_type_b> co_b;
+        std::vector<co_type_c> co_c;
+
+        for (auto id : local_ids) {
+            co_a.push_back(co_type_a{id, pg, iteration_spaces_send_a, iteration_spaces_recv_a});
+            co_b.push_back(co_type_b{id, pg, iteration_spaces_send_b, iteration_spaces_recv_b});
+            co_c.push_back(co_type_c{id, pg, iteration_spaces_send_c, iteration_spaces_recv_c});
+        }
+
+        auto itc_a = co_a.begin();
+        auto itc_b = co_b.begin();
+        auto itc_c = co_c.begin();
 
         MPI_Barrier(MPI_COMM_WORLD);
 
         gettimeofday(&start_tv, nullptr);
-        he.pack(vect);
+
+        /* TO DO: debugging string to be removed */
+        for (auto it = local_ids.begin(); it != local_ids.end(); ++it, ++itc_a, ++itc_b, ++itc_c) {
+
+            std::stringstream ss;
+            ss << pid;
+            std::string filename = "tout" + ss.str() + ".txt";
+            std::ofstream tfile(filename.c_str());
+            tfile << "\nFILE for " << *it << "\n";
+
+            auto hdl_a = (*itc_a).exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a, tfile);
+            auto hdl_b = (*itc_b).exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b, tfile);
+            auto hdl_c = (*itc_c).exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c, tfile);
+
+            hdl_a.wait();
+            hdl_b.wait();
+            hdl_c.wait();
+
+            tfile.flush();
+            tfile.close();
+        }
 
         gettimeofday(&stop1_tv, nullptr);
-        he.exchange();
-
-        gettimeofday(&stop2_tv, nullptr);
-        he.unpack(vect);
-
-        gettimeofday(&stop3_tv, nullptr);
-#else
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        gettimeofday(&start_tv, nullptr);
-        he.pack(field1, field2, field3);
-
-        gettimeofday(&stop1_tv, nullptr);
-        he.exchange();
-
-        gettimeofday(&stop2_tv, nullptr);
-        he.unpack(field1, field2, field3);
-
-        gettimeofday(&stop3_tv, nullptr);
-#endif
 
         lapse_time1 =
             ((static_cast<double>(stop1_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop1_tv.tv_usec)) -
                 (static_cast<double>(start_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(start_tv.tv_usec))) *
             1000.0;
 
-        lapse_time2 =
-            ((static_cast<double>(stop2_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop2_tv.tv_usec)) -
-                (static_cast<double>(stop1_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop1_tv.tv_usec))) *
-            1000.0;
-
-        lapse_time3 =
-            ((static_cast<double>(stop3_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop3_tv.tv_usec)) -
-                (static_cast<double>(stop2_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop2_tv.tv_usec))) *
-            1000.0;
-
-        lapse_time4 =
-            ((static_cast<double>(stop3_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop3_tv.tv_usec)) -
-                (static_cast<double>(start_tv.tv_sec) + 1 / 1000000.0 * static_cast<double>(start_tv.tv_usec))) *
-            1000.0;
-
         MPI_Barrier(MPI_COMM_WORLD);
-        file << "TIME PACK: " << lapse_time1 << std::endl;
-        file << "TIME EXCH: " << lapse_time2 << std::endl;
-        file << "TIME UNPK: " << lapse_time3 << std::endl;
-        file << "TIME ALL : " << lapse_time1 + lapse_time2 + lapse_time3 << std::endl;
-        file << "TIME TOT : " << lapse_time4 << std::endl;
 
-#ifdef __CUDACC__
-        GT_CUDA_CHECK(cudaMemcpy(a.ptr,
-            gpu_a,
-            (DIM1 + H1m1 + H1p1) * (DIM2 + H2m1 + H2p1) * (DIM3 + H3m1 + H3p1) *
-                sizeof(triple_t<USE_DOUBLE, T1>::data_type),
-            cudaMemcpyDeviceToHost));
-
-        GT_CUDA_CHECK(cudaMemcpy(b.ptr,
-            gpu_b,
-            (DIM1 + H1m2 + H1p2) * (DIM2 + H2m2 + H2p2) * (DIM3 + H3m2 + H3p2) *
-                sizeof(triple_t<USE_DOUBLE, T2>::data_type),
-            cudaMemcpyDeviceToHost));
-
-        GT_CUDA_CHECK(cudaMemcpy(c.ptr,
-            gpu_c,
-            (DIM1 + H1m3 + H1p3) * (DIM2 + H2m3 + H2p3) * (DIM3 + H3m3 + H3p3) *
-                sizeof(triple_t<USE_DOUBLE, T3>::data_type),
-            cudaMemcpyDeviceToHost));
-
-        GT_CUDA_CHECK(cudaFree(gpu_a));
-        GT_CUDA_CHECK(cudaFree(gpu_b));
-        GT_CUDA_CHECK(cudaFree(gpu_c));
-#endif
+        file << "TIME TOT : " << lapse_time1 << std::endl;
 
         file << "\n********************************************************************************\n";
 
@@ -524,7 +588,7 @@ namespace halo_exchange_3D_generic_full {
         int H3m3,
         int H3p3) {
 
-        /* Here we compute the computing gris as in many applications
+        /* Here we compute the computing grid as in many applications
          */
         MPI_Comm_rank(MPI_COMM_WORLD, &pid);
         MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
@@ -2037,14 +2101,10 @@ namespace halo_exchange_3D_generic_full {
     }
 } // namespace halo_exchange_3D_generic_full
 
-#ifdef STANDALONE
+
 int main(int argc, char **argv) {
-#ifdef GT_USE_GPU
-    device_binding();
-#endif
 
     MPI_Init(&argc, &argv);
-    gridtools::GCL_Init(argc, argv);
 
     if (argc != 22) {
         std::cout << "Usage: test_halo_exchange_3D dimx dimy dimz h1m1 hip1 h2m1 h2m1 h3m1 h3p1 h1m2 hip2 h2m2 h2m2 "
@@ -2098,10 +2158,5 @@ int main(int argc, char **argv) {
         H3p3);
 
     MPI_Finalize();
+
 }
-#else
-TEST(Communication, test_halo_exchange_3D_generic_full) {
-    bool passed = halo_exchange_3D_generic_full::test(98, 54, 87, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 0, 1);
-    EXPECT_TRUE(passed);
-}
-#endif
