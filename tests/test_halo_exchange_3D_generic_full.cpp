@@ -225,32 +225,40 @@ namespace halo_exchange_3D_generic_full {
             int i = _id[0];
             int j = _id[1];
             int k = _id[2];
-            int nim, nip, njm, njp, nkm, nkp;
+            std::vector<std::pair<int, int>> iis{std::make_pair(0,i)}, jjs{std::make_pair(0,j)}, kks{std::make_pair(0,k)};
             std::vector<std::pair<id_type, dir_type>> neighbors;
 
             if (per0) {
-                neighbors.push_back(std::make_pair(id_type{mod(i-1, dims[0]), j, k}, std::array<int, 3>{-1,0,0}));
-                neighbors.push_back(std::make_pair(id_type{mod(i+1, dims[0]), j, k}, std::array<int, 3>{1,0,0}));
+                iis.push_back(std::make_pair(-1, mod(i-1, dims[0])));
+                iis.push_back(std::make_pair(1, mod(i+1, dims[0])));
             } else {
-                if (i > 0) neighbors.push_back(std::make_pair(id_type{i-1, j, k}, std::array<int, 3>{-1,0,0}));
-                if (i < (dims[0]-1)) neighbors.push_back(std::make_pair(id_type{i+1, j, k}, std::array<int, 3>{1,0,0}));
+                if (i > 0) iis.push_back(std::make_pair(-1, i-1));
+                if (i < (dims[0]-1)) iis.push_back(std::make_pair(1, i+1));
             }
-
             if (per1) {
-                neighbors.push_back(std::make_pair(id_type{i, mod(j-1, dims[1]), k}, std::array<int, 3>{0,-1,0}));
-                neighbors.push_back(std::make_pair(id_type{i, mod(j+1, dims[1]), k}, std::array<int, 3>{0,1,0}));
+                jjs.push_back(std::make_pair(-1, mod(j-1, dims[1])));
+                jjs.push_back(std::make_pair(1, mod(j+1, dims[1])));
             } else {
-                if (j > 0) neighbors.push_back(std::make_pair(id_type{i, j-1, k}, std::array<int, 3>{0,-1,0}));
-                if (j < (dims[1]-1)) neighbors.push_back(std::make_pair(id_type{i, j+1, k}, std::array<int, 3>{0,1,0}));
+                if (j > 0) jjs.push_back(std::make_pair(-1, j-1));
+                if (j < (dims[1]-1)) jjs.push_back(std::make_pair(1, j+1));
+            }
+            if (per2) {
+                kks.push_back(std::make_pair(-1, mod(k-1, dims[2])));
+                kks.push_back(std::make_pair(1, mod(k+1, dims[2])));
+            } else {
+                if (k > 0) kks.push_back(std::make_pair(-1, k-1));
+                if (k < (dims[2]-1)) kks.push_back(std::make_pair(1, k+1));
             }
 
-            if (per2) {
-                neighbors.push_back(std::make_pair(id_type{i, j, mod(k-1, dims[2])}, std::array<int, 3>{0,0,-1}));
-                neighbors.push_back(std::make_pair(id_type{i, j, mod(k+1, dims[2])}, std::array<int, 3>{0,0,1}));
-            } else {
-                if (k > 0) neighbors.push_back(std::make_pair(id_type{i, j, k-1}, std::array<int, 3>{0,0,-1}));
-                if (k < (dims[2]-1)) neighbors.push_back(std::make_pair(id_type{i, j, k+1}, std::array<int, 3>{0,0,1}));
-            }
+            for (auto ii : iis) {
+                for (auto jj : jjs) {
+                    for (auto kk : kks) {
+                        if (!(ii.first == 0 && jj.first == 0 && kk.first == 0)) {
+                            neighbors.push_back(std::make_pair(id_type{ii.second, jj.second, kk.second}, std::array<int, 3>{ii.first, jj.first, kk.first}));
+                        }
+                    }
+                }
+            };
 
             return neighbors;
 
