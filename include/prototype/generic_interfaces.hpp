@@ -352,7 +352,8 @@ class generic_co {
         using node_uid_t = node_uid<unique_id_t, rank_id_t>;
         using neighbor_list_t = neighbor_list<std::list<neighbor_spec<id_type, direction_type, node_uid_t>>>;
 
-        std::vector<MPI_Request> m_requests;
+        std::vector<MPI_Request> m_r_requests;
+        std::vector<MPI_Request> m_s_requests;
         std::vector<std::shared_ptr<std::vector<DT>>> m_data_ptrs;
         IterationSpacesRecv m_iteration_space;
         id_type m_id;
@@ -360,14 +361,16 @@ class generic_co {
         DD m_data_desc;
         std::ostream& m_fl;
 
-        future(std::vector<MPI_Request>&& requests,
+        future(std::vector<MPI_Request>&& r_requests,
+               std::vector<MPI_Request>&& s_requests,
                std::vector<std::shared_ptr<std::vector<DT>>>&& data_ptrs,
                const IterationSpacesRecv& iteration_space,
                const id_type id,
                const neighbor_list_t& neighbors_list,
                const DD& data_desc,
                std::ostream& fl) :
-            m_requests{std::move(requests)},
+            m_r_requests{std::move(r_requests)},
+            m_s_requests{std::move(s_requests)},
             m_data_ptrs{std::move(data_ptrs)},
             m_iteration_space{iteration_space},
             m_id{id},
@@ -377,11 +380,15 @@ class generic_co {
 
         void wait() {
 
-            MPI_Status st;
+            MPI_Status r_st, s_st;
             int idx1D, idx_neigh, r_size;
 
-            for (auto& request : m_requests) {
-                if (request != 0) MPI_Wait(&request, &st);
+            for (auto& s_request : m_s_requests) {
+                MPI_Wait(&s_request, &s_st);
+            }
+
+            for (auto& r_request : m_r_requests) {
+                if (r_request != 0) MPI_Wait(&r_request, &r_st);
             }
 
             idx_neigh = 0;
@@ -429,21 +436,21 @@ public:
         auto my_unique_id = info.uid().unique_id();
         auto my_rank = info.uid().rank();
 
-        std::vector<MPI_Request> s_request(info.list().size());
-        std::vector<MPI_Request> r_request(info.list().size());
+        std::vector<MPI_Request> s_requests(info.list().size());
+        std::vector<MPI_Request> r_requests(info.list().size());
         std::vector<std::shared_ptr<std::vector<DT>> > data_ptrs(info.list().size());
 
-        std::for_each(s_request.begin(), s_request.end(), [](MPI_Request const &x) { std::cout << "s_R>" << x << "< "; });
+        std::for_each(s_requests.begin(), s_requests.end(), [](MPI_Request const &x) { std::cout << "s_R>" << x << "< "; });
         std::cout << "\n";
 
-        std::for_each(r_request.begin(), r_request.end(), [](MPI_Request const &x) { std::cout << "r_R>" << x << "< "; });
+        std::for_each(r_requests.begin(), r_requests.end(), [](MPI_Request const &x) { std::cout << "r_R>" << x << "< "; });
         std::cout << "\n";
 
         int s_ind=0;
         int r_ind=0;
 
         std::for_each(info.list().begin(), info.list().end(),
-                      [&fl, my_unique_id, &r_ind, &r_request, &data_ptrs, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+                      [&fl, my_unique_id, &r_ind, &r_requests, &data_ptrs, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
                       {
                           /** this is a very sketchy firt exaxmple -
                               buffers are contiguous and tags are
@@ -461,8 +468,8 @@ public:
 
                           MPI_Irecv(&(*container.begin()),
                                     container.size()*sizeof(DT), MPI_CHAR, neighbor.uid().rank(),
-                                    (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())), MPI_COMM_WORLD, &r_request[r_ind++]);
-                          fl << "Done " << r_ind << "\n";
+                                    (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())), MPI_COMM_WORLD, &r_requests[r_ind++]);
+                          fl << "Recv done, index = " << r_ind << "\n";
                           fl.flush();
                       }
                       );
@@ -470,7 +477,7 @@ public:
         int s_size;
 
         std::for_each(info.list().begin(), info.list().end(),
-                      [&fl, &data_desc, &s_size, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+                      [&fl, &data_desc, &s_size, &s_ind, &s_requests, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
                       {
                           /** this is a very sketchy firt exaxmple -
                               buffers are contiguous and tags are
@@ -480,9 +487,6 @@ public:
 
                           auto s = m_send_iteration_space(m_id, neighbor.id(), neighbor.direction());
                           s_size = std::tuple_size<decltype(s)>::value;
-
-                          MPI_Status st;
-                          MPI_Request mock;
 
                           std::vector<DT> container;
 
@@ -496,17 +500,16 @@ public:
 
                           MPI_Isend(&(*container.begin()),
                                     sizeof(DT)*range_loop_size(s), MPI_CHAR, neighbor.uid().rank(),
-                                    (neighbor.uid().unique_id()<<5) + direction_type::direction2int(neighbor.direction()), MPI_COMM_WORLD, &mock);
-                          fl << "Done\n";
+                                    (neighbor.uid().unique_id()<<5) + direction_type::direction2int(neighbor.direction()), MPI_COMM_WORLD, &s_requests[s_ind++]);
+                          fl << "Send done, index = " << s_ind << "\n";
                           fl.flush();
-                          MPI_Wait(&mock, &st);
                           // auto it = container.begin();
                           // gridtools::range_loop(s, [&data, &it](auto const& indices) { data[indices[0]][indices[1]] = *it; it++; });
 
                       }
                       );
 
-        return {std::move(r_request), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
+        return {std::move(r_requests), std::move(s_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
 
     }
 };
