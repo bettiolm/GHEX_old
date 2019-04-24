@@ -429,16 +429,21 @@ public:
         auto my_unique_id = info.uid().unique_id();
         auto my_rank = info.uid().rank();
 
-        std::vector<MPI_Request> request(info.list().size());
+        std::vector<MPI_Request> s_request(info.list().size());
+        std::vector<MPI_Request> r_request(info.list().size());
         std::vector<std::shared_ptr<std::vector<DT>> > data_ptrs(info.list().size());
 
-        std::for_each(request.begin(), request.end(), [](MPI_Request const &x) { std::cout << "R>" << x << "< "; });
+        std::for_each(s_request.begin(), s_request.end(), [](MPI_Request const &x) { std::cout << "s_R>" << x << "< "; });
         std::cout << "\n";
 
-        int ind=0;
+        std::for_each(r_request.begin(), r_request.end(), [](MPI_Request const &x) { std::cout << "r_R>" << x << "< "; });
+        std::cout << "\n";
+
+        int s_ind=0;
+        int r_ind=0;
 
         std::for_each(info.list().begin(), info.list().end(),
-                      [&fl, my_unique_id, &ind, &request, &data_ptrs, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+                      [&fl, my_unique_id, &r_ind, &r_request, &data_ptrs, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
                       {
                           /** this is a very sketchy firt exaxmple -
                               buffers are contiguous and tags are
@@ -447,17 +452,17 @@ public:
                               (neighbot+directon). */
 
                           auto r = m_recv_iteration_space(m_id, neighbor.id(), neighbor.direction());
-                          data_ptrs[ind] = std::make_shared<std::vector<DT>>(range_loop_size(r)); // enough space
+                          data_ptrs[r_ind] = std::make_shared<std::vector<DT>>(range_loop_size(r)); // enough space
 
-                          std::vector<DT>& container = *data_ptrs[ind];
+                          std::vector<DT>& container = *data_ptrs[r_ind];
 
-                          std::cout << "##### DEBUG: RECV tag 1 = " << (my_unique_id<<7) << std::endl;
+                          std::cout << "##### DEBUG: RECV tag 1 = " << (my_unique_id<<5) << std::endl;
                           std::cout << "##### DEBUG: RECV tag 2 = " << direction_type::direction2int(direction_type::invert_direction(neighbor.direction())) << std::endl;
 
                           MPI_Irecv(&(*container.begin()),
                                     container.size()*sizeof(DT), MPI_CHAR, neighbor.uid().rank(),
-                                    (my_unique_id<<7) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())), MPI_COMM_WORLD, &request[ind++]);
-                          fl << "Done " << ind << "\n";
+                                    (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())), MPI_COMM_WORLD, &r_request[r_ind++]);
+                          fl << "Done " << r_ind << "\n";
                           fl.flush();
                       }
                       );
@@ -486,12 +491,12 @@ public:
                           assert(range_loop_size(s) == container.size());
                           //assert(gridtools::range_loop_size(s) == container.size());
 
-                          std::cout << "##### DEBUG: SEND tag 1 = " << (neighbor.uid().unique_id()<<7) << std::endl;
+                          std::cout << "##### DEBUG: SEND tag 1 = " << (neighbor.uid().unique_id()<<5) << std::endl;
                           std::cout << "##### DEBUG: SEND tag 2 = " << direction_type::direction2int(neighbor.direction()) << std::endl;
 
                           MPI_Isend(&(*container.begin()),
                                     sizeof(DT)*range_loop_size(s), MPI_CHAR, neighbor.uid().rank(),
-                                    (neighbor.uid().unique_id()<<7) + direction_type::direction2int(neighbor.direction()), MPI_COMM_WORLD, &mock);
+                                    (neighbor.uid().unique_id()<<5) + direction_type::direction2int(neighbor.direction()), MPI_COMM_WORLD, &mock);
                           fl << "Done\n";
                           fl.flush();
                           MPI_Wait(&mock, &st);
@@ -501,7 +506,7 @@ public:
                       }
                       );
 
-        return {std::move(request), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
+        return {std::move(r_request), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
 
     }
 };
