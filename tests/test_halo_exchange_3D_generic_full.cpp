@@ -403,6 +403,7 @@ namespace halo_exchange_3D_generic_full {
         /* TO DO: debugging string to be removed */
         for (auto it = local_ids.begin(); it != local_ids.end(); ++it, ++itc_a, ++itc_b, ++itc_c) {
 
+#ifndef NDEBUG
             std::stringstream ss;
             ss << pid;
             std::string filename = "tout" + ss.str() + ".txt";
@@ -412,13 +413,20 @@ namespace halo_exchange_3D_generic_full {
             auto hdl_a = (*itc_a).template exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a, tfile);
             auto hdl_b = (*itc_b).template exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b, tfile);
             auto hdl_c = (*itc_c).template exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c, tfile);
+#else
+            auto hdl_a = (*itc_a).template exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a);
+            auto hdl_b = (*itc_b).template exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b);
+            auto hdl_c = (*itc_c).template exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c);
+#endif
 
             hdl_a.wait();
             hdl_b.wait();
             hdl_c.wait();
 
+#ifndef NDEBUG
             tfile.flush();
             tfile.close();
+#endif
         }
 
         gettimeofday(&stop1_tv, nullptr);

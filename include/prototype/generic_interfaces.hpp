@@ -353,39 +353,42 @@ class generic_co {
         using neighbor_list_t = neighbor_list<std::list<neighbor_spec<id_type, direction_type, node_uid_t>>>;
 
         std::vector<MPI_Request> m_r_requests;
-        std::vector<MPI_Request> m_s_requests;
         std::vector<std::shared_ptr<std::vector<DT>>> m_data_ptrs;
         IterationSpacesRecv m_iteration_space;
         id_type m_id;
         neighbor_list_t m_neighbors_list;
         DD m_data_desc;
+#ifndef NDEBUG
         std::ostream& m_fl;
+#endif
 
         future(std::vector<MPI_Request>&& r_requests,
-               std::vector<MPI_Request>&& s_requests,
                std::vector<std::shared_ptr<std::vector<DT>>>&& data_ptrs,
                const IterationSpacesRecv& iteration_space,
                const id_type id,
                const neighbor_list_t& neighbors_list,
+#ifndef NDEBUG
                const DD& data_desc,
                std::ostream& fl) :
+#else
+               const DD& data_desc) :
+#endif
             m_r_requests{std::move(r_requests)},
-            m_s_requests{std::move(s_requests)},
             m_data_ptrs{std::move(data_ptrs)},
             m_iteration_space{iteration_space},
             m_id{id},
             m_neighbors_list{neighbors_list},
+#ifndef NDEBUG
             m_data_desc{data_desc},
             m_fl{fl} {}
+#else
+            m_data_desc{data_desc} {}
+#endif
 
         void wait() {
 
-            MPI_Status r_st, s_st;
+            MPI_Status r_st;
             int idx1D, idx_neigh, r_size;
-
-            for (auto& s_request : m_s_requests) {
-                MPI_Wait(&s_request, &s_st);
-            }
 
             for (auto& r_request : m_r_requests) {
                 if (r_request != 0) MPI_Wait(&r_request, &r_st);
@@ -427,11 +430,17 @@ public:
     id_type domain_id() const { return m_id; };
 
     template <typename DD, typename DT>
+#ifndef NDEBUG
     future<DD, DT> exchange(DD& data_desc, std::ostream& fl) {
+#else
+    future<DD, DT> exchange(DD& data_desc) {
+#endif
 
         auto const& info = m_pg.id_info(m_id);
 
+#ifndef NDEBUG
         typename PG::show_node_info{fl}(info);
+#endif
 
         auto my_unique_id = info.uid().unique_id();
         auto my_rank = info.uid().rank();
@@ -439,18 +448,25 @@ public:
         std::vector<MPI_Request> s_requests(info.list().size());
         std::vector<MPI_Request> r_requests(info.list().size());
         std::vector<std::shared_ptr<std::vector<DT>> > data_ptrs(info.list().size());
+        std::vector<std::vector<DT>> s_containers(info.list().size());
 
+#ifndef NDEBUG
         std::for_each(s_requests.begin(), s_requests.end(), [](MPI_Request const &x) { std::cout << "s_R>" << x << "< "; });
         std::cout << "\n";
 
         std::for_each(r_requests.begin(), r_requests.end(), [](MPI_Request const &x) { std::cout << "r_R>" << x << "< "; });
         std::cout << "\n";
+#endif
 
         int s_ind=0;
         int r_ind=0;
 
         std::for_each(info.list().begin(), info.list().end(),
+#ifndef NDEBUG
                       [&fl, my_unique_id, &r_ind, &r_requests, &data_ptrs, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+#else
+                      [my_unique_id, &r_ind, &r_requests, &data_ptrs, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+#endif
                       {
                           /** this is a very sketchy firt exaxmple -
                               buffers are contiguous and tags are
@@ -463,21 +479,29 @@ public:
 
                           std::vector<DT>& container = *data_ptrs[r_ind];
 
+#ifndef NDEBUG
                           std::cout << "##### DEBUG: RECV tag 1 = " << (my_unique_id<<5) << std::endl;
                           std::cout << "##### DEBUG: RECV tag 2 = " << direction_type::direction2int(direction_type::invert_direction(neighbor.direction())) << std::endl;
+#endif
 
                           MPI_Irecv(&(*container.begin()),
                                     container.size()*sizeof(DT), MPI_CHAR, neighbor.uid().rank(),
                                     (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())), MPI_COMM_WORLD, &r_requests[r_ind++]);
+#ifndef NDEBUG
                           fl << "Recv done, index = " << r_ind << "\n";
                           fl.flush();
+#endif
                       }
                       );
 
         int s_size;
 
         std::for_each(info.list().begin(), info.list().end(),
-                      [&fl, &data_desc, &s_size, &s_ind, &s_requests, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+#ifndef NDEBUG
+                      [&fl, &data_desc, &s_size, &s_ind, &s_requests, &s_containers, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+#else
+                      [&data_desc, &s_size, &s_ind, &s_requests, &s_containers, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+#endif
                       {
                           /** this is a very sketchy firt exaxmple -
                               buffers are contiguous and tags are
@@ -488,28 +512,41 @@ public:
                           auto s = m_send_iteration_space(m_id, neighbor.id(), neighbor.direction());
                           s_size = std::tuple_size<decltype(s)>::value;
 
-                          std::vector<DT> container;
+                          gridtools::range_loop(s, [&data_desc, &s_containers, &s_ind](auto const& indices) { s_containers[s_ind].push_back(data_desc.get_data(indices)); });
 
-                          gridtools::range_loop(s, [&data_desc, &container](auto const& indices) { container.push_back(data_desc.get_data(indices)); });
-
-                          assert(range_loop_size(s) == container.size());
+                          assert(range_loop_size(s) == s_containers[s_ind].size());
                           //assert(gridtools::range_loop_size(s) == container.size());
 
+#ifndef NDEBUG
                           std::cout << "##### DEBUG: SEND tag 1 = " << (neighbor.uid().unique_id()<<5) << std::endl;
                           std::cout << "##### DEBUG: SEND tag 2 = " << direction_type::direction2int(neighbor.direction()) << std::endl;
+#endif
+
+                          std::vector<DT>& container = s_containers[s_ind];
 
                           MPI_Isend(&(*container.begin()),
                                     sizeof(DT)*range_loop_size(s), MPI_CHAR, neighbor.uid().rank(),
                                     (neighbor.uid().unique_id()<<5) + direction_type::direction2int(neighbor.direction()), MPI_COMM_WORLD, &s_requests[s_ind++]);
+#ifndef NDEBUG
                           fl << "Send done, index = " << s_ind << "\n";
                           fl.flush();
+#endif
                           // auto it = container.begin();
                           // gridtools::range_loop(s, [&data, &it](auto const& indices) { data[indices[0]][indices[1]] = *it; it++; });
 
                       }
                       );
 
-        return {std::move(r_requests), std::move(s_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
+        MPI_Status s_st;
+        for (auto s_request : s_requests) {
+            MPI_Wait(&s_request, &s_st);
+        }
+
+#ifndef NDEBUG
+        return {std::move(r_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
+#else
+        return {std::move(r_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc};
+#endif
 
     }
 };
