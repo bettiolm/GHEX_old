@@ -222,7 +222,9 @@ namespace gridtools {
             // then we substitute the partitioned dimensions with the proper halo ranges.
             auto iteration_space = make_tuple_of_inner_ranges(ranges_of_data, m_halos, Partitioned{}, dir, std::integral_constant<int,0>{});
 
+#ifndef NDEBUG
             print_ranges<std::tuple_size<decltype(iteration_space)>::value>(iteration_space, std::integral_constant<int, 0>{});
+#endif
 
             return iteration_space;
         }
@@ -235,7 +237,9 @@ namespace gridtools {
             // then we substitute the partitioned dimensions with the proper halo ranges.
             auto iteration_space = make_tuple_of_outer_ranges(ranges_of_data, m_halos, Partitioned{}, dir, std::integral_constant<int,0>{});
 
+#ifndef NDEBUG
             print_ranges<std::tuple_size<decltype(iteration_space)>::value>(iteration_space, std::integral_constant<int, 0>{});
+#endif
 
             return iteration_space;
         }
