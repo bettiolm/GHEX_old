@@ -18,6 +18,7 @@
 #include <utility>
 #include <array>
 #include <vector>
+#include <tuple>
 #include <thread>
 #include <atomic>
 #include <algorithm>
@@ -334,17 +335,28 @@ public:
    here allows to store the functions without knowing what their
    return type are. To be fixed in future, but this is a prototype.
  */
-template <typename PG, typename IterationSpacesSend, typename IterationSpacesRecv>
+template <typename PG, typename IterationSpacesSend, typename IterationSpacesRecv, typename DD, typename DT>
 class generic_co {
+
+//public:
+
+//    template<typename ...GenericCos>
+//    friend class multiple_co;
+
+private:
+
     using id_type = typename PG::id_type;
     using direction_type = typename PG::direction_type;
+    using data_type = DT;
+
+    const size_t data_type_size = sizeof(DT);
 
     id_type m_id;
     PG const& m_pg;
     IterationSpacesSend m_send_iteration_space;
     IterationSpacesRecv m_recv_iteration_space;
+    DD m_data_desc;
 
-    template <typename DD, typename DT>
     struct future {
 
         using unique_id_t = int;
@@ -417,11 +429,12 @@ class generic_co {
     }
 
 public:
-    generic_co(id_type id, PG const& pg,  IterationSpacesSend send_iteration_space,  IterationSpacesRecv recv_iteration_space)
+    generic_co(id_type id, PG const& pg,  IterationSpacesSend send_iteration_space,  IterationSpacesRecv recv_iteration_space, const DD& data_desc)
         : m_id{id}
         , m_pg{pg}
         , m_send_iteration_space(send_iteration_space)
         , m_recv_iteration_space(recv_iteration_space)
+        , m_data_desc{data_desc}
     {}
 
     generic_co(generic_co const&) = delete;
@@ -429,11 +442,10 @@ public:
 
     id_type domain_id() const { return m_id; };
 
-    template <typename DD, typename DT>
 #ifndef NDEBUG
-    future<DD, DT> exchange(DD& data_desc, std::ostream& fl) {
+    future exchange(std::ostream& fl) {
 #else
-    future<DD, DT> exchange(DD& data_desc) {
+    future exchange() {
 #endif
 
         auto const& info = m_pg.id_info(m_id);
@@ -498,9 +510,9 @@ public:
 
         std::for_each(info.list().begin(), info.list().end(),
 #ifndef NDEBUG
-                      [&fl, &data_desc, &s_size, &s_ind, &s_requests, &s_containers, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+                      [&fl, &s_size, &s_ind, &s_requests, &s_containers, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
 #else
-                      [&data_desc, &s_size, &s_ind, &s_requests, &s_containers, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
+                      [&s_size, &s_ind, &s_requests, &s_containers, this] (typename std::remove_reference<decltype(info.list())>::type::value_type const& neighbor)
 #endif
                       {
                           /** this is a very sketchy firt exaxmple -
@@ -512,7 +524,7 @@ public:
                           auto s = m_send_iteration_space(m_id, neighbor.id(), neighbor.direction());
                           s_size = std::tuple_size<decltype(s)>::value;
 
-                          gridtools::range_loop(s, [&data_desc, &s_containers, &s_ind](auto const& indices) { s_containers[s_ind].push_back(data_desc.get_data(indices)); });
+                          gridtools::range_loop(s, [&s_containers, &s_ind, this](auto const& indices) { s_containers[s_ind].push_back(m_data_desc.get_data(indices)); });
 
                           assert(range_loop_size(s) == s_containers[s_ind].size());
                           //assert(gridtools::range_loop_size(s) == container.size());
@@ -537,16 +549,197 @@ public:
                       }
                       );
 
+        /* This should logically belong to the future wait() method too */
         MPI_Status s_st;
         for (auto s_request : s_requests) {
             MPI_Wait(&s_request, &s_st);
         }
 
 #ifndef NDEBUG
-        return {std::move(r_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc, fl};
+        return {std::move(r_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), m_data_desc, fl};
 #else
-        return {std::move(r_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), data_desc};
+        return {std::move(r_requests), std::move(data_ptrs), m_recv_iteration_space, m_id, info.list(), m_data_desc};
 #endif
 
     }
+
+};
+
+
+template<size_t I = 0, typename Func, typename ...Args>
+typename std::enable_if<I == sizeof...(Args)>::type for_each(std::tuple<Args...>& t, Func) {}
+
+
+template<size_t I = 0, typename Func, typename ...Args>
+typename std::enable_if<(I < sizeof...(Args))>::type for_each(std::tuple<Args...>& t, Func f) {
+    f(std::get<I>(t));
+    for_each<I+1, Func, Args...>(t, f);
+}
+
+
+template<typename ...GenericCos>
+class multiple_co {};
+
+
+/* Multiple communicators should share the same processing grid.
+ * By default, the grid for the multiple communicator is taken from the first one. */
+template <typename PG, typename ...IterationSpacesSend, typename ...IterationSpacesRecv, typename ...DD, typename ...DT>
+class multiple_co<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>...> {
+
+    using id_type = typename PG::id_type;
+    using direction_type = typename PG::direction_type;
+
+    std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+
+public:
+
+    multiple_co(generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&... generic_cos) : m_generic_cos{generic_cos...} {}
+
+    struct future {
+
+        using unique_id_t = int;
+        using rank_id_t = int;
+        using node_uid_t = node_uid<unique_id_t, rank_id_t>;
+        using neighbor_list_t = neighbor_list<std::list<neighbor_spec<id_type, direction_type, node_uid_t>>>;
+
+        std::vector<MPI_Request> m_r_requests;
+        std::vector<std::shared_ptr<std::vector<unsigned char>>> m_r_buffers;
+        neighbor_list_t m_neighbors_list;
+        std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+
+        future(std::vector<MPI_Request>&& r_requests,
+               std::vector<std::shared_ptr<std::vector<unsigned char>>>&& r_buffers,
+               const neighbor_list_t& neighbors_list,
+               std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> generic_cos) :
+            m_r_requests{std::move(r_requests)},
+            m_r_buffers{std::move(r_buffers)},
+            m_neighbors_list{neighbors_list},
+            m_generic_cos{generic_cos} {}
+
+        void wait() {
+
+            MPI_Status r_st;
+            for (auto r_request : m_r_requests) {
+                MPI_Wait(&r_request, &r_st);
+            }
+
+            int r_ind{0};
+
+            /* UNPACK */
+            for_each(m_neighbors_list.begin(), m_neighbors_list.end(), [this, &r_ind](auto const& neighbor) {
+
+                size_t offset{0};
+                for_each(m_generic_cos, [this, &neighbor, &r_ind, &offset](auto& co) {
+
+                    using co_type = typename std::remove_reference<decltype(co)>::type;
+                    using data_type = typename co_type::data_type;
+
+                    const unsigned char* tmp_buffer_ptr; // shall it be moved outside?
+                    const data_type* tmp_data_ptr; // shall it be moved outside?
+
+                    tmp_buffer_ptr = &((*(m_r_buffers[r_ind]))[offset]);
+                    tmp_data_ptr = reinterpret_cast<const data_type*>(tmp_buffer_ptr);
+                    auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                    gridtools::range_loop(r, [&co, &tmp_data_ptr](auto const& indices) {
+                        auto value = *(tmp_data_ptr++);
+                        co.m_data_desc.set_data(value, indices);
+                    });
+                    offset += range_loop_size(r) * co.data_type_size;
+
+                });
+
+            });
+
+        }
+
+    };
+
+    future exchange() {
+
+        /* processing grid and neighbors information.
+         * First communicator is used (hard-coded). */
+        auto const& info = std::get<0>(m_generic_cos).m_pg.id_info(std::get<0>(m_generic_cos).m_id);
+        auto my_unique_id = info.uid().unique_id();
+
+        /* only one per neighbor */
+        std::vector<std::vector<unsigned char>> s_buffers(info.list().size());
+        std::vector<std::shared_ptr<std::vector<unsigned char>>> r_buffers(info.list().size());
+        std::vector<size_t> r_buffers_sizes(info.list().size());
+        std::vector<MPI_Request> s_requests(info.list().size());
+        std::vector<MPI_Request> r_requests(info.list().size());
+
+        int s_ind{0};
+        int r_ind{0};
+
+        /* RECEIVE: loop through neighbors */
+        std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_buffers, &r_buffers_sizes, &r_requests, &r_ind](auto const& neighbor) {
+
+            r_buffers_sizes[r_ind] = 0;
+
+            /* receive buffer preparation (loop through generic communicators) */
+            for_each(m_generic_cos, [&neighbor, &r_buffers_sizes, &r_ind](auto& co) {
+                auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                r_buffers_sizes[r_ind] += (range_loop_size(r) * co.data_type_size);
+            });
+            r_buffers[r_ind] = std::make_shared<std::vector<unsigned char>>(r_buffers_sizes[r_ind]);
+
+            std::vector<unsigned char>& r_buffer = *r_buffers[r_ind];
+            MPI_Irecv(&(*r_buffer.begin()),
+                      r_buffer.size(),
+                      MPI_CHAR,
+                      neighbor.uid().rank(),
+                      (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())),
+                      MPI_COMM_WORLD,
+                      &r_requests[r_ind++]); // at the end r_ind is incremented
+
+        });
+
+        /* SEND: loop through neighbors */
+        std::for_each(info.list().begin(), info.list().end(), [this, &s_buffers, &s_requests, &s_ind](auto const& neighbor) {
+
+            /* send buffer preparation (loop through generic communicators) (PACK) */
+            for_each(m_generic_cos, [&neighbor, &s_buffers, &s_ind](auto& co) {
+
+                using co_type = typename std::remove_reference<decltype(co)>::type;
+                using data_type = typename co_type::data_type;
+
+                std::vector<data_type> tmp_data;
+                const data_type* tmp_data_ptr; // shall it be moved outside?
+                const unsigned char* tmp_buffer_ptr; // shall it be moved outside?
+
+                auto s = co.m_send_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                gridtools::range_loop(s, [&co, &tmp_data](auto const& indices) {
+                    tmp_data.push_back(co.m_data_desc.get_data(indices));
+                });
+                assert(range_loop_size(s) == tmp_data.size());
+                tmp_data_ptr = &(*(tmp_data.begin()));
+                tmp_buffer_ptr = reinterpret_cast<const unsigned char*>(tmp_data_ptr);
+                std::vector<unsigned char> tmp_buffer{tmp_buffer_ptr, tmp_buffer_ptr + range_loop_size(s) * co.data_type_size};
+                s_buffers[s_ind].insert(s_buffers[s_ind].end(), tmp_buffer.begin(), tmp_buffer.end());
+
+            });
+
+            std::vector<unsigned char>& s_buffer = s_buffers[s_ind];
+            MPI_Isend(&(*s_buffer.begin()),
+                      s_buffer.size(),
+                      MPI_CHAR,
+                      neighbor.uid().rank(),
+                      (neighbor.uid().unique_id()<<5) + direction_type::direction2int(neighbor.direction()),
+                      MPI_COMM_WORLD,
+                      &s_requests[s_ind++]); // at the end s_ind is incremented
+
+        });
+
+        /* This should logically belong to the future wait() method too */
+        MPI_Status s_st;
+        for (auto s_request : s_requests) {
+            MPI_Wait(&s_request, &s_st);
+        }
+
+        // MPI_Pack and MPI_Unpack: can this be an alternative options instead of using std::vector?
+
+        return {std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos};
+
+    }
+
 };
