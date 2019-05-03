@@ -10,7 +10,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 
 find_package(MPI REQUIRED)
 
-find_package(GridTools 0.22 REQUIRED)
+find_package(GridTools 1.1.0 REQUIRED)
 
 message(">>>>>>>>>>>>>>>>${GridTools_MODULE_PATH}")
 
