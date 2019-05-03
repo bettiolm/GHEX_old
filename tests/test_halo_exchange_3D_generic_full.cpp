@@ -378,18 +378,35 @@ namespace halo_exchange_3D_generic_full {
             return grid_c.outer_iteration_space<gt::partitioned<0, 1, 2>>(data_dsc_c, direction);
         };
 
-        typedef generic_co<generic_pg<id_type, dir_type>, decltype(iteration_spaces_send_a), decltype(iteration_spaces_recv_a)> co_type_a;
-        typedef generic_co<generic_pg<id_type, dir_type>, decltype(iteration_spaces_send_b), decltype(iteration_spaces_recv_b)> co_type_b;
-        typedef generic_co<generic_pg<id_type, dir_type>, decltype(iteration_spaces_send_c), decltype(iteration_spaces_recv_c)> co_type_c;
+        typedef generic_co<
+                generic_pg<id_type, dir_type>,
+                decltype(iteration_spaces_send_a),
+                decltype(iteration_spaces_recv_a),
+                data_dsc_type_1,
+                triple_t<USE_DOUBLE, T1>
+                > co_type_a;
+        typedef generic_co<
+                generic_pg<id_type, dir_type>,
+                decltype(iteration_spaces_send_b),
+                decltype(iteration_spaces_recv_b),
+                data_dsc_type_2,
+                triple_t<USE_DOUBLE, T2>
+                > co_type_b;
+        typedef generic_co<generic_pg<id_type, dir_type>,
+                decltype(iteration_spaces_send_c),
+                decltype(iteration_spaces_recv_c),
+                data_dsc_type_3,
+                triple_t<USE_DOUBLE, T3>
+                > co_type_c;
 
         std::vector<co_type_a> co_a;
         std::vector<co_type_b> co_b;
         std::vector<co_type_c> co_c;
 
         for (auto id : local_ids) {
-            co_a.push_back(co_type_a{id, pg, iteration_spaces_send_a, iteration_spaces_recv_a});
-            co_b.push_back(co_type_b{id, pg, iteration_spaces_send_b, iteration_spaces_recv_b});
-            co_c.push_back(co_type_c{id, pg, iteration_spaces_send_c, iteration_spaces_recv_c});
+            co_a.push_back(co_type_a{id, pg, iteration_spaces_send_a, iteration_spaces_recv_a, data_dsc_a});
+            co_b.push_back(co_type_b{id, pg, iteration_spaces_send_b, iteration_spaces_recv_b, data_dsc_b});
+            co_c.push_back(co_type_c{id, pg, iteration_spaces_send_c, iteration_spaces_recv_c, data_dsc_c});
         }
 
         auto itc_a = co_a.begin();
@@ -403,25 +420,18 @@ namespace halo_exchange_3D_generic_full {
         /* TO DO: debugging string to be removed */
         for (auto it = local_ids.begin(); it != local_ids.end(); ++it, ++itc_a, ++itc_b, ++itc_c) {
 
+            multiple_co<co_type_a, co_type_b, co_type_c> m_co{(*itc_a), (*itc_b), (*itc_c)};
+
 #ifndef NDEBUG
             std::stringstream ss;
             ss << pid;
             std::string filename = "tout" + ss.str() + ".txt";
             std::ofstream tfile(filename.c_str());
             tfile << "\nFILE for " << *it << "\n";
-
-            auto hdl_a = (*itc_a).template exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a, tfile);
-            auto hdl_b = (*itc_b).template exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b, tfile);
-            auto hdl_c = (*itc_c).template exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c, tfile);
-#else
-            auto hdl_a = (*itc_a).template exchange<data_dsc_type_1, triple_t<USE_DOUBLE, T1>>(data_dsc_a);
-            auto hdl_b = (*itc_b).template exchange<data_dsc_type_2, triple_t<USE_DOUBLE, T2>>(data_dsc_b);
-            auto hdl_c = (*itc_c).template exchange<data_dsc_type_3, triple_t<USE_DOUBLE, T3>>(data_dsc_c);
 #endif
 
-            hdl_a.wait();
-            hdl_b.wait();
-            hdl_c.wait();
+            auto hdl = m_co.exchange();
+            hdl.wait();
 
 #ifndef NDEBUG
             tfile.flush();
