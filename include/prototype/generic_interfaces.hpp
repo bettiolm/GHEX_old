@@ -338,10 +338,10 @@ public:
 template <typename PG, typename IterationSpacesSend, typename IterationSpacesRecv, typename DD, typename DT>
 class generic_co {
 
-//public:
+public:
 
-//    template<typename ...GenericCos>
-//    friend class multiple_co;
+    template<typename ...GenericCos>
+    friend class multiple_co;
 
 private:
 
