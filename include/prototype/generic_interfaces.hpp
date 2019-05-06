@@ -628,25 +628,35 @@ public:
             /* UNPACK */
             for_each(m_neighbors_list.begin(), m_neighbors_list.end(), [this, &r_ind](auto const& neighbor) {
 
-                size_t offset{0};
-                for_each(m_generic_cos, [this, &neighbor, &r_ind, &offset](auto& co) {
+                size_t from{0};
+                for_each(m_generic_cos, [this, &neighbor, &r_ind, &from](auto& co) {
 
                     using co_type = typename std::remove_reference<decltype(co)>::type;
                     using data_type = typename co_type::data_type;
 
-                    const unsigned char* tmp_buffer_ptr; // shall it be moved outside?
-                    const data_type* tmp_data_ptr; // shall it be moved outside?
-
-                    tmp_buffer_ptr = &((*(m_r_buffers[r_ind]))[offset]);
-                    tmp_data_ptr = reinterpret_cast<const data_type*>(tmp_buffer_ptr);
                     auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                    auto r_size = range_loop_size(r);
+
+                    std::vector<data_type> tmp_data(r_size);
+                    data_type* tmp_data_ptr = &(*(tmp_data.begin()));
+                    unsigned char* tmp_buffer_ptr = reinterpret_cast<unsigned char*>(tmp_data_ptr);
+
+                    auto to = from + (r_size * co.data_type_size);
+                    for (auto i = from; i < to; ++i) {
+                        *tmp_buffer_ptr = (*(m_r_buffers[r_ind]))[i];
+                        tmp_buffer_ptr++;
+                    }
+                    from = to;
+
                     gridtools::range_loop(r, [&co, &tmp_data_ptr](auto const& indices) {
-                        auto value = *(tmp_data_ptr++);
+                        auto value = *tmp_data_ptr;
                         co.m_data_desc.set_data(value, indices);
+                        tmp_data_ptr++;
                     });
-                    offset += range_loop_size(r) * co.data_type_size;
 
                 });
+
+                r_ind++;
 
             });
 
@@ -684,6 +694,7 @@ public:
             r_buffers[r_ind] = std::make_shared<std::vector<unsigned char>>(r_buffers_sizes[r_ind]);
 
             std::vector<unsigned char>& r_buffer = *r_buffers[r_ind];
+
             MPI_Irecv(&(*r_buffer.begin()),
                       r_buffer.size(),
                       MPI_CHAR,
