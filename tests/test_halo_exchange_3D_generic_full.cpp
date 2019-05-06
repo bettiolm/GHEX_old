@@ -433,10 +433,9 @@ namespace halo_exchange_3D_generic_full {
         auto hdl = m_co.exchange(tfile);
         hdl.wait();
 
-#ifndef NDEBUG
         tfile.flush();
         tfile.close();
-#endif
+
         // }
 
         gettimeofday(&stop1_tv, nullptr);

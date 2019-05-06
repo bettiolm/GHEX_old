@@ -688,6 +688,7 @@ public:
             for (auto const& time : m_times) {
                 m_fl << "\t" << time.first << " " << time.second << "\n";
             }
+            m_fl.flush();
 
         }
 
@@ -800,6 +801,7 @@ public:
         for (auto const& time : m_times) {
             fl << "\t" << time.first << " " << time.second << "\n";
         }
+        fl.flush();
 
         return {std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos, fl};
 
