@@ -413,31 +413,33 @@ namespace halo_exchange_3D_generic_full {
         auto itc_b = co_b.begin();
         auto itc_c = co_c.begin();
 
+        auto it = local_ids.begin();
+
+        multiple_co<co_type_a, co_type_b, co_type_c> m_co{(*itc_a), (*itc_b), (*itc_c)};
+
         MPI_Barrier(MPI_COMM_WORLD);
 
         gettimeofday(&start_tv, nullptr);
 
         /* TO DO: debugging string to be removed */
-        for (auto it = local_ids.begin(); it != local_ids.end(); ++it, ++itc_a, ++itc_b, ++itc_c) {
-
-            multiple_co<co_type_a, co_type_b, co_type_c> m_co{(*itc_a), (*itc_b), (*itc_c)};
+        // for (auto it = local_ids.begin(); it != local_ids.end(); ++it, ++itc_a, ++itc_b, ++itc_c) {
 
 #ifndef NDEBUG
-            std::stringstream ss;
-            ss << pid;
-            std::string filename = "tout" + ss.str() + ".txt";
-            std::ofstream tfile(filename.c_str());
-            tfile << "\nFILE for " << *it << "\n";
+        std::stringstream ss;
+        ss << pid;
+        std::string filename = "tout" + ss.str() + ".txt";
+        std::ofstream tfile(filename.c_str());
+        tfile << "\nFILE for " << *it << "\n";
 #endif
 
-            auto hdl = m_co.exchange();
-            hdl.wait();
+        auto hdl = m_co.exchange();
+        hdl.wait();
 
 #ifndef NDEBUG
-            tfile.flush();
-            tfile.close();
+        tfile.flush();
+        tfile.close();
 #endif
-        }
+        // }
 
         gettimeofday(&stop1_tv, nullptr);
 
