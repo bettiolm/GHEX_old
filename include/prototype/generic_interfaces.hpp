@@ -782,17 +782,17 @@ public:
 
         });
 
-        struct timeval send_stop;
-        gettimeofday(&send_stop, nullptr);
-        double send_lapse = ((static_cast<double>(send_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_stop.tv_usec)) -
-                             (static_cast<double>(send_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_start.tv_usec))) * 1000.0;
-        m_times.push_back(std::make_pair("send", send_lapse));
-
         /* This should logically belong to the future wait() method too */
         MPI_Status s_st;
         for (auto s_request : s_requests) {
             MPI_Wait(&s_request, &s_st);
         }
+
+        struct timeval send_stop;
+        gettimeofday(&send_stop, nullptr);
+        double send_lapse = ((static_cast<double>(send_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_stop.tv_usec)) -
+                             (static_cast<double>(send_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("send", send_lapse));
 
         // MPI_Pack and MPI_Unpack: can this be an alternative options instead of using std::vector?
 
