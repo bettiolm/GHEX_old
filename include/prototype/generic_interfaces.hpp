@@ -618,10 +618,9 @@ public:
 
         void wait() {
 
-            MPI_Status r_st;
-            for (auto r_request : m_r_requests) {
-                MPI_Wait(&r_request, &r_st);
-            }
+            int info_list_size = m_r_requests.size();
+            std::vector<MPI_Status> r_statuses(info_list_size);
+            MPI_Waitall(info_list_size, &m_r_requests[0], &r_statuses[0]);
 
             int r_ind{0};
 
@@ -671,12 +670,14 @@ public:
         auto const& info = std::get<0>(m_generic_cos).m_pg.id_info(std::get<0>(m_generic_cos).m_id);
         auto my_unique_id = info.uid().unique_id();
 
+        int info_list_size = info.list().size();
+
         /* only one per neighbor */
-        std::vector<std::vector<unsigned char>> s_buffers(info.list().size());
-        std::vector<std::shared_ptr<std::vector<unsigned char>>> r_buffers(info.list().size());
-        std::vector<size_t> r_buffers_sizes(info.list().size());
-        std::vector<MPI_Request> s_requests(info.list().size());
-        std::vector<MPI_Request> r_requests(info.list().size());
+        std::vector<std::vector<unsigned char>> s_buffers(info_list_size);
+        std::vector<std::shared_ptr<std::vector<unsigned char>>> r_buffers(info_list_size);
+        std::vector<size_t> r_buffers_sizes(info_list_size);
+        std::vector<MPI_Request> s_requests(info_list_size);
+        std::vector<MPI_Request> r_requests(info_list_size);
 
         int s_ind{0};
         int r_ind{0};
@@ -742,10 +743,8 @@ public:
         });
 
         /* This should logically belong to the future wait() method too */
-        MPI_Status s_st;
-        for (auto s_request : s_requests) {
-            MPI_Wait(&s_request, &s_st);
-        }
+        std::vector<MPI_Status> s_statuses(info_list_size);
+        MPI_Waitall(info_list_size, &s_requests[0], &s_statuses[0]);
 
         // MPI_Pack and MPI_Unpack: can this be an alternative options instead of using std::vector?
 
