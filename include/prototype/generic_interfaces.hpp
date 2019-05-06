@@ -682,30 +682,6 @@ public:
         int s_ind{0};
         int r_ind{0};
 
-        /* RECEIVE: loop through neighbors */
-        std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_buffers, &r_buffers_sizes, &r_requests, &r_ind](auto const& neighbor) {
-
-            r_buffers_sizes[r_ind] = 0;
-
-            /* receive buffer preparation (loop through generic communicators) */
-            for_each(m_generic_cos, [&neighbor, &r_buffers_sizes, &r_ind](auto& co) {
-                auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
-                r_buffers_sizes[r_ind] += (range_loop_size(r) * co.data_type_size);
-            });
-            r_buffers[r_ind] = std::make_shared<std::vector<unsigned char>>(r_buffers_sizes[r_ind]);
-
-            std::vector<unsigned char>& r_buffer = *r_buffers[r_ind];
-
-            MPI_Irecv(&(*r_buffer.begin()),
-                      r_buffer.size(),
-                      MPI_CHAR,
-                      neighbor.uid().rank(),
-                      (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())),
-                      MPI_COMM_WORLD,
-                      &r_requests[r_ind++]); // at the end r_ind is incremented
-
-        });
-
         /* SEND: loop through neighbors */
         std::for_each(info.list().begin(), info.list().end(), [this, &s_buffers, &s_requests, &s_ind](auto const& neighbor) {
 
@@ -739,6 +715,30 @@ public:
                       (neighbor.uid().unique_id()<<5) + direction_type::direction2int(neighbor.direction()),
                       MPI_COMM_WORLD,
                       &s_requests[s_ind++]); // at the end s_ind is incremented
+
+        });
+
+        /* RECEIVE: loop through neighbors */
+        std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_buffers, &r_buffers_sizes, &r_requests, &r_ind](auto const& neighbor) {
+
+            r_buffers_sizes[r_ind] = 0;
+
+            /* receive buffer preparation (loop through generic communicators) */
+            for_each(m_generic_cos, [&neighbor, &r_buffers_sizes, &r_ind](auto& co) {
+                auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                r_buffers_sizes[r_ind] += (range_loop_size(r) * co.data_type_size);
+            });
+            r_buffers[r_ind] = std::make_shared<std::vector<unsigned char>>(r_buffers_sizes[r_ind]);
+
+            std::vector<unsigned char>& r_buffer = *r_buffers[r_ind];
+
+            MPI_Irecv(&(*r_buffer.begin()),
+                      r_buffer.size(),
+                      MPI_CHAR,
+                      neighbor.uid().rank(),
+                      (my_unique_id<<5) + direction_type::direction2int(direction_type::invert_direction(neighbor.direction())),
+                      MPI_COMM_WORLD,
+                      &r_requests[r_ind++]); // at the end r_ind is incremented
 
         });
 
