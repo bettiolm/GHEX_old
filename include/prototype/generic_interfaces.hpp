@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <mutex>
 #include <cassert>
+#include <sys/time.h>
 #include "./range_loops.hpp"
 
 const int log_max_objs = 10; // log_2(max number of PGs)
@@ -590,6 +591,7 @@ class multiple_co<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, D
     using direction_type = typename PG::direction_type;
 
     std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+    std::vector<std::pair<std::string, double>> m_times;
 
 public:
 
@@ -606,24 +608,40 @@ public:
         std::vector<std::shared_ptr<std::vector<unsigned char>>> m_r_buffers;
         neighbor_list_t m_neighbors_list;
         std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+        std::vector<std::pair<std::string, double>> m_times;
+        std::ostream& m_fl;
 
         future(std::vector<MPI_Request>&& r_requests,
                std::vector<std::shared_ptr<std::vector<unsigned char>>>&& r_buffers,
                const neighbor_list_t& neighbors_list,
-               std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> generic_cos) :
+               std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> generic_cos,
+               std::ostream& fl) :
             m_r_requests{std::move(r_requests)},
             m_r_buffers{std::move(r_buffers)},
             m_neighbors_list{neighbors_list},
-            m_generic_cos{generic_cos} {}
+            m_generic_cos{generic_cos},
+            m_fl{fl} {}
 
         void wait() {
+
+            struct timeval wait_start;
+            gettimeofday(&wait_start, nullptr);
 
             MPI_Status r_st;
             for (auto r_request : m_r_requests) {
                 MPI_Wait(&r_request, &r_st);
             }
 
+            struct timeval wait_stop;
+            gettimeofday(&wait_stop, nullptr);
+            double wait_lapse = ((static_cast<double>(wait_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(wait_stop.tv_usec)) -
+                                 (static_cast<double>(wait_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(wait_start.tv_usec))) * 1000.0;
+            m_times.push_back(std::make_pair("wait", wait_lapse));
+
             int r_ind{0};
+
+            struct timeval unpack_start;
+            gettimeofday(&unpack_start, nullptr);
 
             /* UNPACK */
             for_each(m_neighbors_list.begin(), m_neighbors_list.end(), [this, &r_ind](auto const& neighbor) {
@@ -660,11 +678,22 @@ public:
 
             });
 
+            struct timeval unpack_stop;
+            gettimeofday(&unpack_stop, nullptr);
+            double unpack_lapse = ((static_cast<double>(unpack_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(unpack_stop.tv_usec)) -
+                                 (static_cast<double>(unpack_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(unpack_start.tv_usec))) * 1000.0;
+            m_times.push_back(std::make_pair("unpack", unpack_lapse));
+
+            m_fl << "Wait times:\n";
+            for (auto const& time : m_times) {
+                m_fl << "\t" << time.first << " " << time.second << "\n";
+            }
+
         }
 
     };
 
-    future exchange() {
+    future exchange(std::ostream& fl) {
 
         /* processing grid and neighbors information.
          * First communicator is used (hard-coded). */
@@ -680,6 +709,9 @@ public:
 
         int s_ind{0};
         int r_ind{0};
+
+        struct timeval receive_start;
+        gettimeofday(&receive_start, nullptr);
 
         /* RECEIVE: loop through neighbors */
         std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_buffers, &r_buffers_sizes, &r_requests, &r_ind](auto const& neighbor) {
@@ -704,6 +736,15 @@ public:
                       &r_requests[r_ind++]); // at the end r_ind is incremented
 
         });
+
+        struct timeval receive_stop;
+        gettimeofday(&receive_stop, nullptr);
+        double receive_lapse = ((static_cast<double>(receive_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(receive_stop.tv_usec)) -
+                             (static_cast<double>(receive_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(receive_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("receive", receive_lapse));
+
+        struct timeval send_start;
+        gettimeofday(&send_start, nullptr);
 
         /* SEND: loop through neighbors */
         std::for_each(info.list().begin(), info.list().end(), [this, &s_buffers, &s_requests, &s_ind](auto const& neighbor) {
@@ -741,6 +782,12 @@ public:
 
         });
 
+        struct timeval send_stop;
+        gettimeofday(&send_stop, nullptr);
+        double send_lapse = ((static_cast<double>(send_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_stop.tv_usec)) -
+                             (static_cast<double>(send_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("send", send_lapse));
+
         /* This should logically belong to the future wait() method too */
         MPI_Status s_st;
         for (auto s_request : s_requests) {
@@ -749,7 +796,12 @@ public:
 
         // MPI_Pack and MPI_Unpack: can this be an alternative options instead of using std::vector?
 
-        return {std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos};
+        fl << "Exchange times:\n";
+        for (auto const& time : m_times) {
+            fl << "\t" << time.first << " " << time.second << "\n";
+        }
+
+        return {std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos, fl};
 
     }
 

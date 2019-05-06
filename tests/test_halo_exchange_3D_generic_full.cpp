@@ -424,15 +424,13 @@ namespace halo_exchange_3D_generic_full {
         /* TO DO: debugging string to be removed */
         // for (auto it = local_ids.begin(); it != local_ids.end(); ++it, ++itc_a, ++itc_b, ++itc_c) {
 
-#ifndef NDEBUG
         std::stringstream ss;
         ss << pid;
         std::string filename = "tout" + ss.str() + ".txt";
         std::ofstream tfile(filename.c_str());
         tfile << "\nFILE for " << *it << "\n";
-#endif
 
-        auto hdl = m_co.exchange();
+        auto hdl = m_co.exchange(tfile);
         hdl.wait();
 
 #ifndef NDEBUG
