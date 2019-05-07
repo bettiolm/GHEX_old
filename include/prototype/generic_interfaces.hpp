@@ -618,44 +618,30 @@ public:
 
         void wait() {
 
+            /* WAIT */
             int info_list_size = m_r_requests.size();
             std::vector<MPI_Status> r_statuses(info_list_size);
             MPI_Waitall(info_list_size, &m_r_requests[0], &r_statuses[0]);
 
-            int r_ind{0};
-
             /* UNPACK */
+            int r_ind{0};
             for_each(m_neighbors_list.begin(), m_neighbors_list.end(), [this, &r_ind](auto const& neighbor) {
 
-                size_t from{0};
-                for_each(m_generic_cos, [this, &neighbor, &r_ind, &from](auto& co) {
+                unsigned char* tmp_buffer_ptr = &(*m_r_buffers[r_ind++])[0];
+                for_each(m_generic_cos, [this, &neighbor, &tmp_buffer_ptr](auto& co) {
 
                     using co_type = typename std::remove_reference<decltype(co)>::type;
                     using data_type = typename co_type::data_type;
 
                     auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
-                    auto r_size = range_loop_size(r);
 
-                    std::vector<data_type> tmp_data(r_size);
-                    data_type* tmp_data_ptr = &(*(tmp_data.begin()));
-                    unsigned char* tmp_buffer_ptr = reinterpret_cast<unsigned char*>(tmp_data_ptr);
-
-                    auto to = from + (r_size * co.data_type_size);
-                    for (auto i = from; i < to; ++i) {
-                        *tmp_buffer_ptr = (*(m_r_buffers[r_ind]))[i];
-                        tmp_buffer_ptr++;
-                    }
-                    from = to;
-
-                    gridtools::range_loop(r, [&co, &tmp_data_ptr](auto const& indices) {
-                        auto value = *tmp_data_ptr;
-                        co.m_data_desc.set_data(value, indices);
-                        tmp_data_ptr++;
+                    gridtools::range_loop(r, [&co, &tmp_buffer_ptr](auto const& indices) {
+                        data_type* tmp_data_ptr = reinterpret_cast<data_type*>(tmp_buffer_ptr);
+                        co.m_data_desc.set_data(*tmp_data_ptr, indices);
+                        tmp_buffer_ptr += co.data_type_size;
                     });
 
                 });
-
-                r_ind++;
 
             });
 
