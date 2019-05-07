@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <mutex>
 #include <cassert>
+#include <sys/time.h>
 #include "./range_loops.hpp"
 
 const int log_max_objs = 10; // log_2(max number of PGs)
@@ -590,6 +591,7 @@ class multiple_co<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, D
     using direction_type = typename PG::direction_type;
 
     std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+    std::vector<std::pair<std::string, double>> m_times;
 
 public:
 
@@ -606,6 +608,7 @@ public:
         std::vector<std::shared_ptr<std::vector<unsigned char>>> m_r_buffers;
         neighbor_list_t m_neighbors_list;
         std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+        std::vector<std::pair<std::string, double>> m_times;
 
         future(std::vector<MPI_Request>&& r_requests,
                std::vector<std::shared_ptr<std::vector<unsigned char>>>&& r_buffers,
@@ -619,11 +622,23 @@ public:
         void wait() {
 
             /* WAIT */
+            struct timeval r_wait_start;
+            gettimeofday(&r_wait_start, nullptr);
+
             int info_list_size = m_r_requests.size();
             std::vector<MPI_Status> r_statuses(info_list_size);
             MPI_Waitall(info_list_size, &m_r_requests[0], &r_statuses[0]);
 
+            struct timeval r_wait_stop;
+            gettimeofday(&r_wait_stop, nullptr);
+            double r_wait_lapse = ((static_cast<double>(r_wait_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(r_wait_stop.tv_usec)) -
+                                 (static_cast<double>(r_wait_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(r_wait_start.tv_usec))) * 1000.0;
+            m_times.push_back(std::make_pair("r_wait", r_wait_lapse));
+
             /* UNPACK */
+            struct timeval unpack_start;
+            gettimeofday(&unpack_start, nullptr);
+
             int r_ind{0};
             for_each(m_neighbors_list.begin(), m_neighbors_list.end(), [this, &r_ind](auto const& neighbor) {
 
@@ -645,6 +660,16 @@ public:
 
             });
 
+            struct timeval unpack_stop;
+            gettimeofday(&unpack_stop, nullptr);
+            double unpack_lapse = ((static_cast<double>(unpack_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(unpack_stop.tv_usec)) -
+                                 (static_cast<double>(unpack_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(unpack_start.tv_usec))) * 1000.0;
+            m_times.push_back(std::make_pair("unpack", unpack_lapse));
+
+        }
+
+        std::vector<std::pair<std::string, double>>& get_times() {
+            return m_times;
         }
 
     };
@@ -655,6 +680,10 @@ public:
          * First communicator is used (hard-coded). */
         auto const& info = std::get<0>(m_generic_cos).m_pg.id_info(std::get<0>(m_generic_cos).m_id);
         auto my_unique_id = info.uid().unique_id();
+
+        /* Allocation */
+        struct timeval alloc_start;
+        gettimeofday(&alloc_start, nullptr);
 
         int info_list_size = info.list().size();
 
@@ -668,7 +697,16 @@ public:
         int s_ind{0};
         int r_ind{0};
 
+        struct timeval alloc_stop;
+        gettimeofday(&alloc_stop, nullptr);
+        double alloc_lapse = ((static_cast<double>(alloc_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(alloc_stop.tv_usec)) -
+                             (static_cast<double>(alloc_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(alloc_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("alloc", alloc_lapse));
+
         /* SEND: loop through neighbors */
+        struct timeval send_start;
+        gettimeofday(&send_start, nullptr);
+
         std::for_each(info.list().begin(), info.list().end(), [this, &s_buffers, &s_requests, &s_ind](auto const& neighbor) {
 
             /* send buffer preparation (loop through generic communicators) (PACK) */
@@ -698,7 +736,16 @@ public:
 
         });
 
+        struct timeval send_stop;
+        gettimeofday(&send_stop, nullptr);
+        double send_lapse = ((static_cast<double>(send_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_stop.tv_usec)) -
+                             (static_cast<double>(send_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(send_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("send", send_lapse));
+
         /* RECEIVE: loop through neighbors */
+        struct timeval receive_start;
+        gettimeofday(&receive_start, nullptr);
+
         std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_buffers, &r_buffers_sizes, &r_requests, &r_ind](auto const& neighbor) {
 
             r_buffers_sizes[r_ind] = 0;
@@ -722,14 +769,45 @@ public:
 
         });
 
-        /* This should logically belong to the future wait() method too */
+        struct timeval receive_stop;
+        gettimeofday(&receive_stop, nullptr);
+        double receive_lapse = ((static_cast<double>(receive_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(receive_stop.tv_usec)) -
+                             (static_cast<double>(receive_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(receive_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("receive", receive_lapse));
+
+        /* WAIT: This should logically belong to the future wait() method too */
+        struct timeval s_wait_start;
+        gettimeofday(&s_wait_start, nullptr);
+
         std::vector<MPI_Status> s_statuses(info_list_size);
         MPI_Waitall(info_list_size, &s_requests[0], &s_statuses[0]);
 
+        struct timeval s_wait_stop;
+        gettimeofday(&s_wait_stop, nullptr);
+        double s_wait_lapse = ((static_cast<double>(s_wait_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(s_wait_stop.tv_usec)) -
+                             (static_cast<double>(s_wait_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(s_wait_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("s_wait", s_wait_lapse));
+
         // MPI_Pack and MPI_Unpack: can this be an alternative options instead of using std::vector?
 
-        return {std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos};
+        /* Future constructor */
+        struct timeval f_constr_start;
+        gettimeofday(&f_constr_start, nullptr);
 
+        future handle{std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos};
+
+        struct timeval f_constr_stop;
+        gettimeofday(&f_constr_stop, nullptr);
+        double f_constr_lapse = ((static_cast<double>(f_constr_stop.tv_sec) + 1 / 1000000.0 * static_cast<double>(f_constr_stop.tv_usec)) -
+                             (static_cast<double>(f_constr_start.tv_sec) + 1 / 1000000.0 * static_cast<double>(f_constr_start.tv_usec))) * 1000.0;
+        m_times.push_back(std::make_pair("f_constr", f_constr_lapse));
+
+        return handle;
+
+    }
+
+    std::vector<std::pair<std::string, double>>& get_times() {
+        return m_times;
     }
 
 };

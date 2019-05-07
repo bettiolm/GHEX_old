@@ -451,7 +451,18 @@ namespace halo_exchange_3D_generic_full {
 
         MPI_Barrier(MPI_COMM_WORLD);
 
-        file << "TIME TOT : " << lapse_time1 << std::endl;
+        file << "TIME TOT : " << lapse_time1 << "ms" << std::endl;
+        file << "Detailed times :" << std::endl;
+        double sum_times{0.0};
+        for (auto const& time : m_co.get_times()) {
+            sum_times += time.second;
+            file << "    " << time.first << ": " << time.second << "ms" << std::endl;
+        }
+        for (auto const& time : hdl.get_times()) {
+            sum_times += time.second;
+            file << "    " << time.first << ": " << time.second << "ms" << std::endl;
+        }
+        file << "Sum of detailed times : " << sum_times << "ms" << std::endl;
 
         file << "\n********************************************************************************\n";
 
