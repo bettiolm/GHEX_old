@@ -691,19 +691,13 @@ public:
                 using co_type = typename std::remove_reference<decltype(co)>::type;
                 using data_type = typename co_type::data_type;
 
-                std::vector<data_type> tmp_data;
-                const data_type* tmp_data_ptr; // shall it be moved outside?
-                const unsigned char* tmp_buffer_ptr; // shall it be moved outside?
-
                 auto s = co.m_send_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
-                gridtools::range_loop(s, [&co, &tmp_data](auto const& indices) {
-                    tmp_data.push_back(co.m_data_desc.get_data(indices));
+                // assert(range_loop_size(s) == tmp_data.size());
+                gridtools::range_loop(s, [&co, &s_buffers, &s_ind](auto const& indices) {
+                    const data_type* tmp_data_ptr = &co.m_data_desc.get_data(indices);
+                    const unsigned char* tmp_buffer_ptr = reinterpret_cast<const unsigned char*>(tmp_data_ptr);
+                    s_buffers[s_ind].insert(s_buffers[s_ind].end(), tmp_buffer_ptr, tmp_buffer_ptr + co.data_type_size);
                 });
-                assert(range_loop_size(s) == tmp_data.size());
-                tmp_data_ptr = &(*(tmp_data.begin()));
-                tmp_buffer_ptr = reinterpret_cast<const unsigned char*>(tmp_data_ptr);
-                std::vector<unsigned char> tmp_buffer{tmp_buffer_ptr, tmp_buffer_ptr + range_loop_size(s) * co.data_type_size};
-                s_buffers[s_ind].insert(s_buffers[s_ind].end(), tmp_buffer.begin(), tmp_buffer.end());
 
             });
 

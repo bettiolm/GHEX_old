@@ -116,7 +116,7 @@ class data_descriptor_t {
         return range(begin<I>(), end<I>());
     }
 
-    DT get_data(std::array<int, r> indices) const {
+    DT& get_data(std::array<int, r> indices) {
         return get_data(indices, gridtools::meta::make_integer_sequence<int, r>{});
     }
 
@@ -134,8 +134,9 @@ class data_descriptor_t {
 
   private:
 
+    /* Now returns a reference */
     template <int... Dims>
-    DT get_data(std::array<int, r> indices, gridtools::meta::integer_sequence<int, Dims...>) const {
+    DT& get_data(std::array<int, r> indices, gridtools::meta::integer_sequence<int, Dims...>) {
         return m_data(indices[Dims]...);
     }
 
