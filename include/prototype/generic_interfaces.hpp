@@ -602,12 +602,13 @@ public:
 
         std::for_each(info.list().begin(), info.list().end(), [this](auto const& neighbor) {
 
-            int s_buffer_size{0};
+            size_t s_buffer_size{0};
             for_each(m_generic_cos, [&neighbor, &s_buffer_size](auto& co) {
                 auto s = co.m_send_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
                 s_buffer_size += range_loop_size(s) * co.data_type_size;
             });
-            m_s_buffers.push_back({s_buffer_size});
+            std::vector<unsigned char> s_buffer(s_buffer_size);
+            m_s_buffers.push_back(s_buffer);
 
         });
 
