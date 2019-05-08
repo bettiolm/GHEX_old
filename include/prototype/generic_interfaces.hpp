@@ -591,11 +591,27 @@ class multiple_co<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, D
     using direction_type = typename PG::direction_type;
 
     std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
+    std::vector<std::vector<unsigned char>> m_s_buffers;
     std::vector<std::pair<std::string, double>> m_times;
 
 public:
 
-    multiple_co(generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&... generic_cos) : m_generic_cos{generic_cos...} {}
+    multiple_co(generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&... generic_cos) : m_generic_cos{generic_cos...} {
+
+        auto const& info = std::get<0>(m_generic_cos).m_pg.id_info(std::get<0>(m_generic_cos).m_id);
+
+        std::for_each(info.list().begin(), info.list().end(), [this](auto const& neighbor) {
+
+            int s_buffer_size{0};
+            for_each(m_generic_cos, [&neighbor, &s_buffer_size](auto& co) {
+                auto s = co.m_send_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                s_buffer_size += range_loop_size(s) * co.data_type_size;
+            });
+            m_s_buffers.push_back({s_buffer_size});
+
+        });
+
+    }
 
     struct future {
 
@@ -688,7 +704,6 @@ public:
         int info_list_size = info.list().size();
 
         /* only one per neighbor */
-        std::vector<std::vector<unsigned char>> s_buffers(info_list_size);
         std::vector<std::shared_ptr<std::vector<unsigned char>>> r_buffers(info_list_size);
         std::vector<size_t> r_buffers_sizes(info_list_size);
         std::vector<MPI_Request> s_requests(info_list_size);
@@ -707,25 +722,26 @@ public:
         struct timeval send_start;
         gettimeofday(&send_start, nullptr);
 
-        std::for_each(info.list().begin(), info.list().end(), [this, &s_buffers, &s_requests, &s_ind](auto const& neighbor) {
+        std::for_each(info.list().begin(), info.list().end(), [this, &s_requests, &s_ind](auto const& neighbor) {
 
             /* send buffer preparation (loop through generic communicators) (PACK) */
-            for_each(m_generic_cos, [&neighbor, &s_buffers, &s_ind](auto& co) {
+            m_s_buffers[s_ind].resize(0);
+            for_each(m_generic_cos, [this, &neighbor, &s_ind](auto& co) {
 
                 using co_type = typename std::remove_reference<decltype(co)>::type;
                 using data_type = typename co_type::data_type;
 
                 auto s = co.m_send_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
                 // assert(range_loop_size(s) == tmp_data.size());
-                gridtools::range_loop(s, [&co, &s_buffers, &s_ind](auto const& indices) {
+                gridtools::range_loop(s, [this, &co, &s_ind](auto const& indices) {
                     const data_type* tmp_data_ptr = &co.m_data_desc.get_data(indices);
                     const unsigned char* tmp_buffer_ptr = reinterpret_cast<const unsigned char*>(tmp_data_ptr);
-                    s_buffers[s_ind].insert(s_buffers[s_ind].end(), tmp_buffer_ptr, tmp_buffer_ptr + co.data_type_size);
+                    m_s_buffers[s_ind].insert(m_s_buffers[s_ind].end(), tmp_buffer_ptr, tmp_buffer_ptr + co.data_type_size);
                 });
 
             });
 
-            std::vector<unsigned char>& s_buffer = s_buffers[s_ind];
+            std::vector<unsigned char>& s_buffer = m_s_buffers[s_ind];
             MPI_Isend(&(*s_buffer.begin()),
                       s_buffer.size(),
                       MPI_CHAR,
