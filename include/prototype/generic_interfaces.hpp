@@ -592,6 +592,7 @@ class multiple_co<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, D
 
     std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> m_generic_cos;
     std::vector<std::vector<unsigned char>> m_s_buffers;
+    std::vector<std::shared_ptr<std::vector<unsigned char>>> m_r_buffers;
     std::vector<std::pair<std::string, double>> m_times;
 
 public:
@@ -603,12 +604,17 @@ public:
         std::for_each(info.list().begin(), info.list().end(), [this](auto const& neighbor) {
 
             size_t s_buffer_size{0};
-            for_each(m_generic_cos, [&neighbor, &s_buffer_size](auto& co) {
+            size_t r_buffer_size{0};
+            for_each(m_generic_cos, [&neighbor, &s_buffer_size, &r_buffer_size](auto& co) {
                 auto s = co.m_send_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
                 s_buffer_size += range_loop_size(s) * co.data_type_size;
+                auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
+                r_buffer_size += range_loop_size(r) * co.data_type_size;
             });
             std::vector<unsigned char> s_buffer(s_buffer_size);
             m_s_buffers.push_back(s_buffer);
+            std::vector<unsigned char> r_buffer(r_buffer_size);
+            m_r_buffers.push_back(std::make_shared<std::vector<unsigned char>>(r_buffer));
 
         });
 
@@ -628,11 +634,11 @@ public:
         std::vector<std::pair<std::string, double>> m_times;
 
         future(std::vector<MPI_Request>&& r_requests,
-               std::vector<std::shared_ptr<std::vector<unsigned char>>>&& r_buffers,
+               std::vector<std::shared_ptr<std::vector<unsigned char>>>& r_buffers,
                const neighbor_list_t& neighbors_list,
                std::tuple<generic_co<PG, IterationSpacesSend, IterationSpacesRecv, DD, DT>&...> generic_cos) :
             m_r_requests{std::move(r_requests)},
-            m_r_buffers{std::move(r_buffers)},
+            m_r_buffers{r_buffers},
             m_neighbors_list{neighbors_list},
             m_generic_cos{generic_cos} {}
 
@@ -705,8 +711,6 @@ public:
         int info_list_size = info.list().size();
 
         /* only one per neighbor */
-        std::vector<std::shared_ptr<std::vector<unsigned char>>> r_buffers(info_list_size);
-        std::vector<size_t> r_buffers_sizes(info_list_size);
         std::vector<MPI_Request> s_requests(info_list_size);
         std::vector<MPI_Request> r_requests(info_list_size);
 
@@ -763,18 +767,9 @@ public:
         struct timeval receive_start;
         gettimeofday(&receive_start, nullptr);
 
-        std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_buffers, &r_buffers_sizes, &r_requests, &r_ind](auto const& neighbor) {
+        std::for_each(info.list().begin(), info.list().end(), [this, &my_unique_id, &r_requests, &r_ind](auto const& neighbor) {
 
-            r_buffers_sizes[r_ind] = 0;
-
-            /* receive buffer preparation (loop through generic communicators) */
-            for_each(m_generic_cos, [&neighbor, &r_buffers_sizes, &r_ind](auto& co) {
-                auto r = co.m_recv_iteration_space(co.m_id, neighbor.id(), neighbor.direction());
-                r_buffers_sizes[r_ind] += (range_loop_size(r) * co.data_type_size);
-            });
-            r_buffers[r_ind] = std::make_shared<std::vector<unsigned char>>(r_buffers_sizes[r_ind]);
-
-            std::vector<unsigned char>& r_buffer = *r_buffers[r_ind];
+            std::vector<unsigned char>& r_buffer = *m_r_buffers[r_ind];
 
             MPI_Irecv(&(*r_buffer.begin()),
                       r_buffer.size(),
@@ -811,7 +806,7 @@ public:
         struct timeval f_constr_start;
         gettimeofday(&f_constr_start, nullptr);
 
-        future handle{std::move(r_requests), std::move(r_buffers), info.list(), m_generic_cos};
+        future handle{std::move(r_requests), m_r_buffers, info.list(), m_generic_cos};
 
         struct timeval f_constr_stop;
         gettimeofday(&f_constr_stop, nullptr);
