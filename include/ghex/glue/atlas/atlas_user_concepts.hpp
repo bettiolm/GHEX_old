@@ -361,7 +361,7 @@ namespace gridtools {
 
         template <typename T, typename index_t>
         __global__ void pack_kernel(
-                const atlas::array::ArrayView<T, 2> values,
+                const device_copy<T>* values,
                 const std::size_t local_index_size,
                 const index_t* local_index,
                 const std::size_t levels,
@@ -370,7 +370,7 @@ namespace gridtools {
             auto idx = threadIdx.x + (blockIdx.x * blockDim.x);
             if (idx < local_index_size) {
                 for(auto level = 0; level < levels; ++level) {
-                    buffer[idx * levels + level] = values(local_index[idx], level);
+                    buffer[idx * levels + level] = (*values)(local_index[idx], level);
                 }
             }
         }
@@ -382,11 +382,11 @@ namespace gridtools {
                 const std::size_t local_index_size,
                 const index_t* local_index,
                 const std::size_t levels,
-                atlas::array::ArrayView<T, 2> values) {
+                device_copy<T>* values) {
             auto idx = threadIdx.x + (blockIdx.x * blockDim.x);
             if (idx < local_index_size) {
                 for(auto level = 0; level < levels; ++level) {
-                    values(local_index[idx], level) = buffer[idx * levels + level];
+                    (*values)(local_index[idx], level) = buffer[idx * levels + level];
                 }
             }
         }
@@ -407,17 +407,17 @@ namespace gridtools {
 
                 const DomainDescriptor& m_domain;
                 device_id_type m_device_id;
-                atlas::array::ArrayView<T, 2> m_values;
+                device_copy<T>* m_values;
 
             public:
 
                 atlas_data_descriptor_gpu(
                         const DomainDescriptor& domain,
                         const device_id_type device_id,
-                        const atlas::Field& field) : // WARN: different from cpu data descriptor, but easy to change there
+                        const device_copy<T>* values) : // WARN: different from cpu data descriptor, but easy to change there
                     m_domain{domain},
                     m_device_id{device_id},
-                    m_values{atlas::array::make_device_view<T, 2>(field)} {}
+                    m_values{values} {}
 
                 /** @brief data type size, mandatory*/
                 std::size_t data_type_size() const {
