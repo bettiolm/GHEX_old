@@ -118,10 +118,11 @@ int main(int argc, char** argv) {
             GHEX_field_1_h(node, level) = value;
         }
     }
-    GHEX_field_1.cloneToDevice();
+    // GHEX_field_1.cloneToDevice();
+    gridtools::ghex::device_copy<int>* GHEX_field_1_d_copy = gridtools::ghex::make_device_copy<T>(GHEX_field_1);
 
     // Instantiate data descriptor
-    gridtools::ghex::atlas_data_descriptor_gpu<int, domain_descriptor_t> data_1{local_domains.front(), 0, GHEX_field_1};
+    gridtools::ghex::atlas_data_descriptor_gpu<int, domain_descriptor_t> data_1{local_domains.front(), 0, GHEX_field_1_d_copy};
 
     // Halo exchange on the GPU with GHEX
     auto h = cos.exchange(patterns(data_1));
@@ -142,8 +143,10 @@ int main(int argc, char** argv) {
 
     cudaDeviceSynchronize();
 
-    GHEX_field_1.cloneFromDevice();
-    GHEX_field_1.reactivateHostWriteViews();
+    // GHEX_field_1.cloneFromDevice();
+    // GHEX_field_1.reactivateHostWriteViews();
+
+    gridtools::ghex::update_host_field(GHEX_field_1_d_copy, GHEX_field_1);
 
     lapse_time_GHEX =
         ((static_cast<double>(stop_GHEX.tv_sec) + 1 / 1000000.0 * static_cast<double>(stop_GHEX.tv_usec)) -
