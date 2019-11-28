@@ -47,6 +47,7 @@ namespace gridtools {
                         ATLAS_HOST_DEVICE device_copy_impl& operator = (device_copy_impl&& other) = default;
 
                         ATLAS_HOST_DEVICE std::size_t size() const { return m_data.size(); }
+                        ATLAS_HOST_DEVICE atlas::idx_t nodes() const { return m_data.size() / m_levels; }
                         ATLAS_HOST_DEVICE atlas::idx_t levels() const { return m_levels; }
 
                         ATLAS_HOST_DEVICE T& get(atlas::idx_t node, atlas::idx_t level) {
@@ -73,6 +74,7 @@ namespace gridtools {
                 ATLAS_HOST_DEVICE device_copy& operator = (device_copy&& other) = default;
 
                 ATLAS_HOST_DEVICE std::size_t size() const { return m_device_copy_impl->size(); }
+                ATLAS_HOST_DEVICE atlas::idx_t nodes() const { return m_device_copy_impl->nodes(); }
                 ATLAS_HOST_DEVICE atlas::idx_t levels() const { return m_device_copy_impl->levels(); }
 
                 ATLAS_HOST_DEVICE T& operator()(atlas::idx_t node, atlas::idx_t level) {
@@ -88,6 +90,16 @@ namespace gridtools {
         ATLAS_HOST device_copy<T>* make_device_copy(const atlas::Field& field) {
             using allocator_type = gridtools::ghex::allocator::unified_memory_allocator<T>;
             return new(allocator_type{}.allocate(sizeof(device_copy<T>))) device_copy<T>{field};
+        }
+
+        template<typename T>
+        ATLAS_HOST void update_host_field(const device_copy<T>& d_copy, atlas::Field field) {
+            auto h_view = atlas::array::make_host_view<T, 2>(field);
+            for(auto node = 0; node < d_copy.nodes(); ++node) {
+                for(auto level = 0; level < d_copy.levels(); ++level) {
+                    h_view(node, level) = d_copy(node, level);
+                }
+            }
         }
 
     } // namespace ghex
