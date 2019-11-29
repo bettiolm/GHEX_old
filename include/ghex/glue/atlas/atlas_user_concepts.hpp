@@ -23,6 +23,7 @@
 #include "../../arch_list.hpp"
 #include "../../arch_traits.hpp"
 #include "../../allocator/unified_memory_allocator.hpp"
+#include "./gpu_storage.hpp"
 
 #ifdef __CUDACC__
 #include "../../cuda_utils/error.hpp"
@@ -414,7 +415,7 @@ namespace gridtools {
                 atlas_data_descriptor_gpu(
                         const DomainDescriptor& domain,
                         const device_id_type device_id,
-                        const device_copy<T>* values) : // WARN: different from cpu data descriptor, but easy to change there
+                        device_copy<T>* values) : // WARN: different from cpu data descriptor, but easy to change there
                     m_domain{domain},
                     m_device_id{device_id},
                     m_values{values} {}
